@@ -22,7 +22,6 @@ class EvidenceRole(StrEnum):
     OBSERVED = "OBSERVED"
     INTENDED = "INTENDED"
     DOCUMENTED = "DOCUMENTED"
-    VERIFIED = "VERIFIED"
 
 
 class ResolutionStatus(StrEnum):

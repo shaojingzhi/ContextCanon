@@ -35,7 +35,6 @@ class ModelSerializationTests(unittest.TestCase):
             value="JWT",
             claim_type=ClaimType.RUNTIME_STATE,
             evidence=[self.evidence],
-            status=ResolutionStatus.RESOLVED,
             confidence=1.0,
         )
 
@@ -78,7 +77,16 @@ class ModelSerializationTests(unittest.TestCase):
         encoded = json.dumps(serialized, sort_keys=True, allow_nan=False)
 
         self.assertIs(type(serialized["items"][0]["claim"]["claim_type"]), str)
+        self.assertNotIn("status", serialized["items"][0]["claim"])
         self.assertEqual(serialized["items"][0]["resolution_status"], "RESOLVED")
+        self.assertEqual(
+            serialized["items"][0]["supporting_evidence"][0]["role"],
+            "OBSERVED",
+        )
+        self.assertIs(
+            serialized["items"][0]["supporting_evidence"][0]["verified"],
+            True,
+        )
         self.assertEqual(
             serialized["unresolved_conflicts"][0]["reason_codes"],
             ["INTENT_IMPLEMENTATION_DIVERGENCE"],
@@ -163,12 +171,29 @@ class ModelSerializationTests(unittest.TestCase):
                 timestamp=object(),  # type: ignore[arg-type]
             )
 
-    def test_context_item_rejects_conflicting_statuses(self) -> None:
-        with self.assertRaises(ValueError):
-            ContextItem(
-                claim=self.claim,
-                resolution_status=ResolutionStatus.DIVERGED,
-            )
+    def test_resolution_status_belongs_to_context_item(self) -> None:
+        resolved_item = ContextItem(
+            claim=self.claim,
+            resolution_status=ResolutionStatus.RESOLVED,
+        )
+        diverged_item = ContextItem(
+            claim=self.claim,
+            resolution_status=ResolutionStatus.DIVERGED,
+        )
+
+        self.assertEqual(
+            resolved_item.to_dict()["resolution_status"],
+            "RESOLVED",
+        )
+        self.assertEqual(
+            diverged_item.to_dict()["resolution_status"],
+            "DIVERGED",
+        )
+
+    def test_verification_is_not_an_evidence_role(self) -> None:
+        self.assertNotIn("VERIFIED", EvidenceRole.__members__)
+        self.assertEqual(self.evidence.role, EvidenceRole.OBSERVED)
+        self.assertIs(self.evidence.verified, True)
 
     def test_context_item_evidence_must_belong_to_claim(self) -> None:
         unrelated_evidence = Evidence(

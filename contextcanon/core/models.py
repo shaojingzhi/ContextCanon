@@ -106,13 +106,10 @@ class Claim:
     value: JSONValue
     claim_type: ClaimType
     evidence: list[Evidence] = field(default_factory=list)
-    status: ResolutionStatus | None = None
     confidence: float | None = None
 
     def __post_init__(self) -> None:
         _require_enum(self.claim_type, ClaimType, field_name="claim_type")
-        if self.status is not None:
-            _require_enum(self.status, ResolutionStatus, field_name="status")
         _require_items(self.evidence, Evidence, field_name="evidence")
         self.value = _canonical_json_value(self.value, field_name="value")
         if self.confidence is not None and not 0.0 <= self.confidence <= 1.0:
@@ -126,7 +123,6 @@ class Claim:
             "value": _canonical_json_value(self.value, field_name="value"),
             "claim_type": self.claim_type.value,
             "evidence": [item.to_dict() for item in self.evidence],
-            "status": self.status.value if self.status is not None else None,
             "confidence": self.confidence,
         }
 
@@ -191,11 +187,6 @@ class ContextItem:
         _require_items(self.reason_codes, ReasonCode, field_name="reason_codes")
         if any(item not in self.claim.evidence for item in self.supporting_evidence):
             raise ValueError("supporting_evidence must belong to the claim")
-        if (
-            self.claim.status is not None
-            and self.claim.status != self.resolution_status
-        ):
-            raise ValueError("claim status must match ContextItem resolution_status")
 
     def to_dict(self) -> dict[str, JSONValue]:
         return {

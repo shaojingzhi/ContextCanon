@@ -310,7 +310,6 @@ Claim(
     value,
     claim_type,
     evidence,
-    status,
     confidence,
 )
 ```
@@ -367,14 +366,13 @@ Initial evidence roles:
 OBSERVED
 INTENDED
 DOCUMENTED
-VERIFIED
 ```
 
 Examples:
 
 ```text
 config/auth.yaml
-→ OBSERVED + potentially VERIFIED
+→ OBSERVED + potentially machine-verified
 
 ADR-015
 → INTENDED
@@ -464,10 +462,10 @@ No dynamic plugin loading is required.
 When the intent is to understand current behaviour, prioritize evidence approximately as:
 
 ```text
-VERIFIED
-OBSERVED
-DOCUMENTED
-INTENDED
+machine-verified evidence
+→ OBSERVED
+→ DOCUMENTED
+→ INTENDED
 ```
 
 Architectural intent must not override verified runtime reality.
@@ -480,9 +478,9 @@ When determining intended architecture:
 
 ```text
 INTENDED
-VERIFIED
-OBSERVED
-DOCUMENTED
+→ machine-verified evidence
+→ OBSERVED
+→ DOCUMENTED
 ```
 
 An accepted architectural decision may describe the desired state even when implementation has not converged.
@@ -673,7 +671,7 @@ V0.1 uses a simple deterministic policy.
 Approximate priority:
 
 ```text
-VERIFIED
+supported by machine-verified evidence
 ↓
 RESOLVED
 ↓
