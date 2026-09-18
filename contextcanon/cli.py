@@ -7,29 +7,18 @@ from collections.abc import Sequence
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(
+    return argparse.ArgumentParser(
         prog="contextcanon",
-        description="ContextCanon CLI (M0 placeholder)",
+        description=(
+            "ContextCanon CLI placeholder; commands arrive in later milestones."
+        ),
     )
-    parser.add_argument(
-        "command",
-        nargs="?",
-        help="A future command such as scan, doctor, or build.",
-    )
-    parser.add_argument("args", nargs=argparse.REMAINDER)
-    return parser
 
 
 def main(argv: Sequence[str] | None = None) -> int:
     parser = build_parser()
-    parsed = parser.parse_args(argv)
-    if parsed.command is None:
-        parser.print_help()
-        return 0
-    print(
-        f"contextcanon {parsed.command!r} is not implemented yet; "
-        "M0 provides the core models only."
-    )
+    parser.parse_args(argv)
+    parser.print_help()
     return 0
 
 

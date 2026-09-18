@@ -1,235 +1,249 @@
-"""Small, serializable data models for ContextCanon M0.
+"""Dependency-free, serializable data models for ContextCanon M0.
 
-These models deliberately contain no extraction, verification, or resolution
-behavior. They are plain data passed between those components in later
-milestones.
+The models contain data and invariants only. Extraction, verification,
+resolution behavior, persistence, and rendering belong to later milestones.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field, fields, is_dataclass
-from datetime import date, datetime
-from enum import Enum
-import json
-from typing import Any, ClassVar, Mapping, TypeVar
+from dataclasses import dataclass, field
+from enum import StrEnum
+from math import isfinite
+from typing import Any
 
 from .types import (
     ClaimType,
     EvidenceRole,
+    JSONValue,
     ReasonCode,
     ResolutionStatus,
     SourceType,
 )
 
-T = TypeVar("T", bound="Serializable")
 
+def _canonical_json_value(value: object, *, field_name: str) -> JSONValue:
+    """Return a deterministic JSON value or reject unsupported input."""
 
-def _serialize(value: Any) -> Any:
-    """Convert model values into JSON-compatible primitives."""
-
-    if isinstance(value, (str, int, float, bool)) or value is None:
+    if value is None:
         return value
-    if isinstance(value, (datetime, date)):
-        return value.isoformat()
-    if isinstance(value, Enum):
-        return value.value
-    if is_dataclass(value):
+    if isinstance(value, str):
+        return str(value)
+    if isinstance(value, bool):
+        return bool(value)
+    if isinstance(value, int):
+        return int(value)
+    if isinstance(value, float):
+        if not isfinite(value):
+            raise ValueError(f"{field_name} must not contain NaN or infinity")
+        return value
+    if isinstance(value, list):
+        return [
+            _canonical_json_value(item, field_name=f"{field_name}[]")
+            for item in value
+        ]
+    if isinstance(value, dict):
+        if not all(isinstance(key, str) for key in value):
+            raise TypeError(f"{field_name} must use string object keys")
         return {
-            item.name: _serialize(getattr(value, item.name))
-            for item in fields(value)
+            key: _canonical_json_value(value[key], field_name=f"{field_name}.{key}")
+            for key in sorted(value)
         }
-    if isinstance(value, Mapping):
-        return {str(key): _serialize(item) for key, item in value.items()}
-    if isinstance(value, (list, tuple, set, frozenset)):
-        return [_serialize(item) for item in value]
-    return value
+    raise TypeError(f"{field_name} contains unsupported value {type(value).__name__}")
 
 
-def _enum_or_value(value: Any, enum_type: type[Any]) -> Any:
-    """Restore a known enum value while preserving unknown extension values."""
-
-    if value is None or isinstance(value, enum_type):
-        return value
-    try:
-        return enum_type(value)
-    except (TypeError, ValueError):
-        return value
+def _require_enum(value: object, enum_type: type[StrEnum], *, field_name: str) -> None:
+    if not isinstance(value, enum_type):
+        raise TypeError(f"{field_name} must be a {enum_type.__name__}")
 
 
-class Serializable:
-    """Mixin providing deterministic dictionary and JSON serialization."""
-
-    _json_sort_keys: ClassVar[bool] = True
-
-    def to_dict(self) -> dict[str, Any]:
-        if not is_dataclass(self):
-            raise TypeError("Serializable models must be dataclasses")
-        return _serialize(self)
-
-    def to_json(self, *, indent: int | None = None) -> str:
-        return json.dumps(
-            self.to_dict(),
-            indent=indent,
-            sort_keys=self._json_sort_keys,
-        )
-
-    @classmethod
-    def from_json(cls: type[T], payload: str) -> T:
-        value = json.loads(payload)
-        if not isinstance(value, dict):
-            raise ValueError(f"Expected a JSON object for {cls.__name__}")
-        return cls.from_dict(value)
+def _require_items(values: list[Any], item_type: type[Any], *, field_name: str) -> None:
+    if not all(isinstance(value, item_type) for value in values):
+        raise TypeError(f"{field_name} must contain only {item_type.__name__} values")
 
 
 @dataclass(slots=True)
-class Evidence(Serializable):
+class Evidence:
     """A traceable source item supporting or contradicting a claim."""
 
     id: str
     source_id: str
-    source_type: SourceType | str
+    source_type: SourceType
     location: str
-    role: EvidenceRole | str
-    content: Any = None
-    timestamp: str | datetime | date | None = None
+    role: EvidenceRole
+    content: JSONValue = None
+    timestamp: str | None = None
     verifier: str | None = None
     verified: bool | None = None
 
-    @classmethod
-    def from_dict(cls, value: Mapping[str, Any]) -> "Evidence":
-        return cls(
-            id=str(value["id"]),
-            source_id=str(value["source_id"]),
-            source_type=_enum_or_value(value["source_type"], SourceType),
-            location=str(value["location"]),
-            role=_enum_or_value(value["role"], EvidenceRole),
-            content=value.get("content"),
-            timestamp=value.get("timestamp"),
-            verifier=value.get("verifier"),
-            verified=value.get("verified"),
-        )
+    def __post_init__(self) -> None:
+        _require_enum(self.source_type, SourceType, field_name="source_type")
+        _require_enum(self.role, EvidenceRole, field_name="role")
+        self.content = _canonical_json_value(self.content, field_name="content")
+        if self.timestamp is not None and not isinstance(self.timestamp, str):
+            raise TypeError("timestamp must be an ISO-8601 string or None")
+
+    def to_dict(self) -> dict[str, JSONValue]:
+        return {
+            "id": self.id,
+            "source_id": self.source_id,
+            "source_type": self.source_type.value,
+            "location": self.location,
+            "role": self.role.value,
+            "content": _canonical_json_value(self.content, field_name="content"),
+            "timestamp": self.timestamp,
+            "verifier": self.verifier,
+            "verified": self.verified,
+        }
 
 
 @dataclass(slots=True)
-class Claim(Serializable):
+class Claim:
     """One semantic assertion and the evidence associated with it."""
 
     id: str
     subject: str
     predicate: str
-    value: Any
-    claim_type: ClaimType | str
+    value: JSONValue
+    claim_type: ClaimType
     evidence: list[Evidence] = field(default_factory=list)
-    status: ResolutionStatus | str | None = None
+    status: ResolutionStatus | None = None
     confidence: float | None = None
 
-    @classmethod
-    def from_dict(cls, value: Mapping[str, Any]) -> "Claim":
-        evidence = [Evidence.from_dict(item) for item in value.get("evidence", [])]
-        return cls(
-            id=str(value["id"]),
-            subject=str(value["subject"]),
-            predicate=str(value["predicate"]),
-            value=value.get("value"),
-            claim_type=_enum_or_value(value["claim_type"], ClaimType),
-            evidence=evidence,
-            status=_enum_or_value(value.get("status"), ResolutionStatus),
-            confidence=value.get("confidence"),
-        )
+    def __post_init__(self) -> None:
+        _require_enum(self.claim_type, ClaimType, field_name="claim_type")
+        if self.status is not None:
+            _require_enum(self.status, ResolutionStatus, field_name="status")
+        _require_items(self.evidence, Evidence, field_name="evidence")
+        self.value = _canonical_json_value(self.value, field_name="value")
+        if self.confidence is not None and not 0.0 <= self.confidence <= 1.0:
+            raise ValueError("confidence must be between 0.0 and 1.0")
+
+    def to_dict(self) -> dict[str, JSONValue]:
+        return {
+            "id": self.id,
+            "subject": self.subject,
+            "predicate": self.predicate,
+            "value": _canonical_json_value(self.value, field_name="value"),
+            "claim_type": self.claim_type.value,
+            "evidence": [item.to_dict() for item in self.evidence],
+            "status": self.status.value if self.status is not None else None,
+            "confidence": self.confidence,
+        }
 
 
 @dataclass(slots=True)
-class Resolution(Serializable):
+class Resolution:
     """The governance result for a group of competing claims."""
 
-    status: ResolutionStatus | str
+    status: ResolutionStatus
     selected_claims: list[Claim] = field(default_factory=list)
     conflicting_claims: list[Claim] = field(default_factory=list)
-    reason_codes: list[ReasonCode | str] = field(default_factory=list)
+    reason_codes: list[ReasonCode] = field(default_factory=list)
     explanation: str | None = None
     policy: str | None = None
     policy_version: str | None = None
 
-    @classmethod
-    def from_dict(cls, value: Mapping[str, Any]) -> "Resolution":
-        return cls(
-            status=_enum_or_value(value["status"], ResolutionStatus),
-            selected_claims=[
-                Claim.from_dict(item) for item in value.get("selected_claims", [])
-            ],
-            conflicting_claims=[
-                Claim.from_dict(item)
-                for item in value.get("conflicting_claims", [])
-            ],
-            reason_codes=[
-                _enum_or_value(item, ReasonCode)
-                for item in value.get("reason_codes", [])
-            ],
-            explanation=value.get("explanation"),
-            policy=value.get("policy"),
-            policy_version=value.get("policy_version"),
+    def __post_init__(self) -> None:
+        _require_enum(self.status, ResolutionStatus, field_name="status")
+        _require_items(self.selected_claims, Claim, field_name="selected_claims")
+        _require_items(
+            self.conflicting_claims,
+            Claim,
+            field_name="conflicting_claims",
         )
+        _require_items(self.reason_codes, ReasonCode, field_name="reason_codes")
+
+    def to_dict(self) -> dict[str, JSONValue]:
+        return {
+            "status": self.status.value,
+            "selected_claims": [item.to_dict() for item in self.selected_claims],
+            "conflicting_claims": [item.to_dict() for item in self.conflicting_claims],
+            "reason_codes": [item.value for item in self.reason_codes],
+            "explanation": self.explanation,
+            "policy": self.policy,
+            "policy_version": self.policy_version,
+        }
 
 
 @dataclass(slots=True)
-class ContextItem(Serializable):
-    """A claim plus the resolution metadata needed by a context consumer."""
+class ContextItem:
+    """A claim plus its compiled resolution metadata."""
 
     claim: Claim
-    status: ResolutionStatus | str | None = None
+    resolution_status: ResolutionStatus
     supporting_evidence: list[Evidence] = field(default_factory=list)
-    reason_codes: list[ReasonCode | str] = field(default_factory=list)
+    reason_codes: list[ReasonCode] = field(default_factory=list)
     explanation: str | None = None
 
-    @property
-    def resolution_status(self) -> ResolutionStatus | str | None:
-        """Alias matching the terminology used in the specification."""
-
-        return self.status
-
-    @classmethod
-    def from_dict(cls, value: Mapping[str, Any]) -> "ContextItem":
-        evidence = value.get("supporting_evidence", value.get("evidence", []))
-        status = value.get("status", value.get("resolution_status"))
-        return cls(
-            claim=Claim.from_dict(value["claim"]),
-            status=_enum_or_value(status, ResolutionStatus),
-            supporting_evidence=[Evidence.from_dict(item) for item in evidence],
-            reason_codes=[
-                _enum_or_value(item, ReasonCode)
-                for item in value.get("reason_codes", [])
-            ],
-            explanation=value.get("explanation"),
+    def __post_init__(self) -> None:
+        if not isinstance(self.claim, Claim):
+            raise TypeError("claim must be a Claim")
+        _require_enum(
+            self.resolution_status,
+            ResolutionStatus,
+            field_name="resolution_status",
         )
+        _require_items(
+            self.supporting_evidence,
+            Evidence,
+            field_name="supporting_evidence",
+        )
+        _require_items(self.reason_codes, ReasonCode, field_name="reason_codes")
+        if any(item not in self.claim.evidence for item in self.supporting_evidence):
+            raise ValueError("supporting_evidence must belong to the claim")
+        if (
+            self.claim.status is not None
+            and self.claim.status != self.resolution_status
+        ):
+            raise ValueError("claim status must match ContextItem resolution_status")
+
+    def to_dict(self) -> dict[str, JSONValue]:
+        return {
+            "claim": self.claim.to_dict(),
+            "resolution_status": self.resolution_status.value,
+            "supporting_evidence": [
+                item.to_dict() for item in self.supporting_evidence
+            ],
+            "reason_codes": [item.value for item in self.reason_codes],
+            "explanation": self.explanation,
+        }
 
 
 @dataclass(slots=True)
-class ContextPackage(Serializable):
-    """Structured context prepared for an agent consumer."""
+class ContextPackage:
+    """Structured, reproducible context prepared for an agent consumer."""
 
     id: str
     task: str
+    source_revision: str
+    policy_name: str
+    policy_version: str
+    created_at: str
     items: list[ContextItem] = field(default_factory=list)
     unresolved_conflicts: list[Resolution] = field(default_factory=list)
-    source_revision: str | None = None
-    policy_name: str | None = None
-    policy_version: str | None = None
     token_budget: int | None = None
-    created_at: str | datetime | date | None = None
 
-    @classmethod
-    def from_dict(cls, value: Mapping[str, Any]) -> "ContextPackage":
-        return cls(
-            id=str(value["id"]),
-            task=str(value["task"]),
-            items=[ContextItem.from_dict(item) for item in value.get("items", [])],
-            unresolved_conflicts=[
-                Resolution.from_dict(item)
-                for item in value.get("unresolved_conflicts", [])
-            ],
-            source_revision=value.get("source_revision"),
-            policy_name=value.get("policy_name"),
-            policy_version=value.get("policy_version"),
-            token_budget=value.get("token_budget"),
-            created_at=value.get("created_at"),
+    def __post_init__(self) -> None:
+        _require_items(self.items, ContextItem, field_name="items")
+        _require_items(
+            self.unresolved_conflicts,
+            Resolution,
+            field_name="unresolved_conflicts",
         )
+        if self.token_budget is not None and self.token_budget < 0:
+            raise ValueError("token_budget must be non-negative")
+
+    def to_dict(self) -> dict[str, JSONValue]:
+        return {
+            "id": self.id,
+            "task": self.task,
+            "items": [item.to_dict() for item in self.items],
+            "unresolved_conflicts": [
+                item.to_dict() for item in self.unresolved_conflicts
+            ],
+            "source_revision": self.source_revision,
+            "policy_name": self.policy_name,
+            "policy_version": self.policy_version,
+            "token_budget": self.token_budget,
+            "created_at": self.created_at,
+        }

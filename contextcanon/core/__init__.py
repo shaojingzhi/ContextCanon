@@ -1,7 +1,14 @@
 """Dependency-free ContextCanon core models and shared types."""
 
 from .models import Claim, ContextItem, ContextPackage, Evidence, Resolution
-from .types import ClaimType, EvidenceRole, ReasonCode, ResolutionStatus, SourceType
+from .types import (
+    ClaimType,
+    EvidenceRole,
+    JSONValue,
+    ReasonCode,
+    ResolutionStatus,
+    SourceType,
+)
 
 __all__ = [
     "Claim",
@@ -10,6 +17,7 @@ __all__ = [
     "ContextPackage",
     "Evidence",
     "EvidenceRole",
+    "JSONValue",
     "ReasonCode",
     "Resolution",
     "ResolutionStatus",

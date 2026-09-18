@@ -1,20 +1,14 @@
-"""Shared enums used by the M0 data model.
+"""Shared types used by the ContextCanon core models."""
 
-The enums inherit from ``str`` so their values remain pleasant to use in JSON
-and in command-line output while retaining an explicit vocabulary in Python.
-"""
-
-from enum import Enum
+from enum import StrEnum
+from typing import TypeAlias
 
 
-class _StringEnum(str, Enum):
-    """A string-valued enum with readable string conversion."""
-
-    def __str__(self) -> str:
-        return self.value
+JSONScalar: TypeAlias = str | int | float | bool | None
+JSONValue: TypeAlias = JSONScalar | list["JSONValue"] | dict[str, "JSONValue"]
 
 
-class ClaimType(_StringEnum):
+class ClaimType(StrEnum):
     """The kind of knowledge represented by a claim."""
 
     RUNTIME_STATE = "RUNTIME_STATE"
@@ -22,8 +16,8 @@ class ClaimType(_StringEnum):
     OPERATIONAL_RULE = "OPERATIONAL_RULE"
 
 
-class EvidenceRole(_StringEnum):
-    """How an evidence item relates to the claim it supports."""
+class EvidenceRole(StrEnum):
+    """How an evidence item relates to a claim."""
 
     OBSERVED = "OBSERVED"
     INTENDED = "INTENDED"
@@ -31,7 +25,7 @@ class EvidenceRole(_StringEnum):
     VERIFIED = "VERIFIED"
 
 
-class ResolutionStatus(_StringEnum):
+class ResolutionStatus(StrEnum):
     """Possible governance outcomes for competing claims."""
 
     RESOLVED = "RESOLVED"
@@ -41,7 +35,7 @@ class ResolutionStatus(_StringEnum):
     SUPERSEDED = "SUPERSEDED"
 
 
-class ReasonCode(_StringEnum):
+class ReasonCode(StrEnum):
     """Machine-readable explanations for a resolution outcome."""
 
     VERIFIED_EVIDENCE = "VERIFIED_EVIDENCE"
@@ -52,8 +46,8 @@ class ReasonCode(_StringEnum):
     SUPERSEDED_BY_NEWER_CLAIM = "SUPERSEDED_BY_NEWER_CLAIM"
 
 
-class SourceType(_StringEnum):
-    """Common source categories supported by the V0.1 design."""
+class SourceType(StrEnum):
+    """Source categories supported by the V0.1 design."""
 
     MARKDOWN = "MARKDOWN"
     ADR = "ADR"
