@@ -440,10 +440,13 @@ class ResolutionPolicy(Protocol):
     def resolve(
         self,
         claims: list[Claim],
-        context: ResolutionContext,
     ) -> Resolution:
         ...
 ```
+
+V0.1 resolves the claim types already present on each Claim. Query-specific
+resolution context is deferred until task-aware context compilation requires
+it.
 
 V0.1 implements exactly one:
 
