@@ -84,8 +84,22 @@ def score_case(case: BenchmarkCase, prediction: object) -> dict[str, object]:
 def load_predictions(root: Path, condition: str) -> dict[str, object]:
     predictions = {}
     for path in sorted((root / condition).glob("*.json")):
-        predictions[path.stem] = json.loads(path.read_text(encoding="utf-8"))
+        value = json.loads(path.read_text(encoding="utf-8"))
+        predictions[path.stem] = value.get("prediction") if isinstance(value, dict) and "prediction" in value else value
     return predictions
+
+
+def _failed_score(case: BenchmarkCase) -> dict[str, object]:
+    return {
+        "case_id": case.id,
+        "current": 0,
+        "target": 0,
+        "status": 0,
+        "traceability": 0,
+        "conflict_detection": 0,
+        "is_conflict": int(case.ground_truth.get("status") in {"DIVERGED", "AMBIGUOUS"}),
+        "overall": 0,
+    }
 
 
 def summarize(
@@ -115,14 +129,17 @@ def stability_rate(variant_predictions: dict[str, list[object]]) -> float:
         return 0.0
     stable = 0
     for predictions in variant_predictions.values():
-        tuples = {
-            (
-                validate_prediction(prediction)["current"],
-                validate_prediction(prediction)["target"],
-                validate_prediction(prediction)["status"],
-            )
-            for prediction in predictions
-        }
+        try:
+            tuples = {
+                (
+                    validate_prediction(prediction)["current"],
+                    validate_prediction(prediction)["target"],
+                    validate_prediction(prediction)["status"],
+                )
+                for prediction in predictions
+            }
+        except ValueError:
+            tuples = set()
         stable += int(len(tuples) == 1 and len(predictions) >= 3)
     return stable / len(variant_predictions)
 
@@ -140,11 +157,16 @@ def main() -> int:
     report = {}
     for condition in ("raw", "contextcanon"):
         predictions = load_predictions(args.results, condition)
-        scores = [
-            score_case(case, predictions[f"{case.id}__canonical"])
-            for case in cases
-            if f"{case.id}__canonical" in predictions
-        ]
+        scores = []
+        for case in cases:
+            key = f"{case.id}__canonical"
+            if key not in predictions:
+                continue
+            prediction = predictions[key]
+            try:
+                scores.append(score_case(case, prediction))
+            except ValueError:
+                scores.append(_failed_score(case))
         variants: dict[str, list[object]] = {}
         for case in cases:
             if case.id not in STABILITY_CASE_IDS:
