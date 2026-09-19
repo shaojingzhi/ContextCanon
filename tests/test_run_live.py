@@ -5,9 +5,17 @@ from pathlib import Path
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 from benchmarks.build_prompts import load_cases
-from benchmarks.run_live import ModelResponse, TransportError, discover_prompts, run
+from benchmarks.run_live import (
+    DEFAULT_BASE_URL,
+    ModelResponse,
+    OpenAICompatibleClient,
+    TransportError,
+    discover_prompts,
+    run,
+)
 from benchmarks.scorer import load_predictions, main as scorer_main
 
 
@@ -61,8 +69,43 @@ class LiveRunnerTests(unittest.TestCase):
             prompts = Path(directory) / "prompts"
             write_prompts(prompts)
             fake = FakeModel()
-            run(prompts, Path(directory) / "results", "model-x", "run-01", condition="all", client=fake)
+            results = Path(directory) / "results"
+            run(prompts, results, "model-x", "run-01", condition="all", client=fake)
             self.assertEqual({(model, temperature) for _, model, temperature in fake.calls}, {("model-x", 0)})
+            metadata = {
+                tuple(
+                    json.loads(path.read_text(encoding="utf-8"))[key]
+                    for key in ("model", "temperature", "thinking", "reasoning_effort")
+                )
+                for path in (results / "run-01").glob("*/*.json")
+            }
+            self.assertEqual(metadata, {("model-x", 0, "enabled", "high")})
+
+    def test_deepseek_request_enables_thinking_and_high_reasoning(self) -> None:
+        response = mock.MagicMock()
+        response.__enter__.return_value.read.return_value = json.dumps(
+            {"choices": [{"message": {"content": json.dumps(VALID)}}]}
+        ).encode("utf-8")
+        with mock.patch("benchmarks.run_live.request.urlopen", return_value=response) as urlopen:
+            client = OpenAICompatibleClient("secret")
+            client("prompt", "deepseek-v4-pro", 0)
+        request_body = json.loads(urlopen.call_args.args[0].data)
+        self.assertEqual(request_body["thinking"], {"type": "enabled"})
+        self.assertEqual(request_body["reasoning_effort"], "high")
+        self.assertEqual(urlopen.call_args.args[0].full_url, f"{DEFAULT_BASE_URL}/chat/completions")
+
+    def test_deepseek_api_key_is_read_without_persisting_it(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            prompts = Path(directory) / "prompts"
+            write_prompts(prompts)
+            results = Path(directory) / "results"
+            fake = FakeModel()
+            with mock.patch.dict("os.environ", {"DEEPSEEK_API_KEY": "do-not-save"}, clear=True):
+                with mock.patch("benchmarks.run_live.OpenAICompatibleClient", return_value=fake) as client:
+                    run(prompts, results, "model", "run-01", condition="raw")
+            client.assert_called_once_with("do-not-save", DEFAULT_BASE_URL)
+            for path in (results / "run-01" / "raw").glob("*.json"):
+                self.assertNotIn("do-not-save", path.read_text(encoding="utf-8"))
 
     def test_valid_result_has_expected_filename_and_scorer_compatibility(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -138,4 +181,3 @@ class LiveRunnerTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-

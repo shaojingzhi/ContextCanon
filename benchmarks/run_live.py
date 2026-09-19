@@ -15,6 +15,9 @@ from .scorer import validate_prediction
 
 
 TEMPERATURE = 0
+THINKING_MODE = "enabled"
+REASONING_EFFORT = "high"
+DEFAULT_BASE_URL = "https://api.deepseek.com"
 DEFAULT_RETRIES = 2
 CONDITIONS = ("raw", "contextcanon")
 ORDERINGS = ("canonical", "reverse", "permutation")
@@ -39,7 +42,7 @@ class TransportError(RuntimeError):
 class OpenAICompatibleClient:
     """Small stdlib client for an OpenAI-compatible chat completions endpoint."""
 
-    def __init__(self, api_key: str, base_url: str = "https://api.openai.com/v1") -> None:
+    def __init__(self, api_key: str, base_url: str = DEFAULT_BASE_URL) -> None:
         self.api_key = api_key
         self.base_url = base_url.rstrip("/")
 
@@ -49,6 +52,8 @@ class OpenAICompatibleClient:
                 "model": model,
                 "messages": [{"role": "user", "content": prompt}],
                 "temperature": temperature,
+                "thinking": {"type": THINKING_MODE},
+                "reasoning_effort": REASONING_EFFORT,
             }
         ).encode("utf-8")
         req = request.Request(
@@ -136,6 +141,8 @@ def _run_one(
             "ordering": ordering,
             "model": model,
             "temperature": TEMPERATURE,
+            "thinking": THINKING_MODE,
+            "reasoning_effort": REASONING_EFFORT,
             "latency_ms": round((time.perf_counter() - started) * 1000),
             "input_tokens": None,
             "output_tokens": None,
@@ -149,6 +156,8 @@ def _run_one(
         "ordering": ordering,
         "model": model,
         "temperature": TEMPERATURE,
+        "thinking": THINKING_MODE,
+        "reasoning_effort": REASONING_EFFORT,
         "latency_ms": round((time.perf_counter() - started) * 1000),
         "input_tokens": response.input_tokens,
         "output_tokens": response.output_tokens,
@@ -187,10 +196,10 @@ def run(
             print(_result_path(results, run_id, selected, case_id, ordering))
         return len(discovered)
     if client is None:
-        api_key = os.environ.get("OPENAI_API_KEY")
+        api_key = os.environ.get("DEEPSEEK_API_KEY")
         if not api_key:
-            raise RuntimeError("OPENAI_API_KEY is required for a live run")
-        client = OpenAICompatibleClient(api_key, os.environ.get("OPENAI_BASE_URL", "https://api.openai.com/v1"))
+            raise RuntimeError("DEEPSEEK_API_KEY is required for a live run")
+        client = OpenAICompatibleClient(api_key, os.environ.get("DEEPSEEK_BASE_URL", DEFAULT_BASE_URL))
     run_root.mkdir(parents=True)
     for selected, case_id, path in discovered:
         ordering = path.stem.rsplit("__", 1)[1]
@@ -226,4 +235,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-
