@@ -534,6 +534,10 @@ The system must not ask an LLM to arbitrarily select one.
 
 Verification is optional per Evidence item.
 
+Verification checks whether recorded Evidence can still be reproduced from
+its source and location. It validates Evidence provenance; it does not
+reinterpret or validate the normalized semantic truth in `Claim.value`.
+
 Conceptual interface:
 
 ```python
@@ -541,9 +545,23 @@ class Verifier(Protocol):
     def verify(
         self,
         evidence: Evidence,
-        claim: Claim,
+        document: SourceDocument,
     ) -> VerificationResult:
         ...
+```
+
+Verification results have three outcomes:
+
+```text
+VERIFIED
+→ the current source reproduces the recorded Evidence
+
+FAILED
+→ verification completed normally, but the current source no longer matches
+  the Evidence
+
+ERROR
+→ verification could not be completed
 ```
 
 Initial deterministic verifiers may include:
