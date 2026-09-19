@@ -1,0 +1,10 @@
+id: order-noise-03
+question: What authentication protocol is currently used, what is the intended target, and what is the knowledge status?
+ground_truth:
+  current: JWT
+  target: OAuth2
+  status: DIVERGED
+  valid_current_sources: [config/auth.yaml]
+  valid_target_sources: [docs/adr/ADR-015.md]
+  required_conflict_sources: []
+

@@ -1,0 +1,10 @@
+id: diverged-02
+question: What authentication protocol is currently used, what is the intended target, and what is the knowledge status?
+ground_truth:
+  current: OAuth2
+  target: JWT
+  status: DIVERGED
+  valid_current_sources: [config/auth.yaml]
+  valid_target_sources: [docs/adr/ADR-015.md]
+  required_conflict_sources: []
+

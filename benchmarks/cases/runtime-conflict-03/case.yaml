@@ -1,0 +1,10 @@
+id: runtime-conflict-03
+question: What authentication protocol is currently used, what is the intended target, and what is the knowledge status?
+ground_truth:
+  current: null
+  target: OAuth2
+  status: AMBIGUOUS
+  valid_current_sources: []
+  valid_target_sources: [docs/adr/ADR-015.md]
+  required_conflict_sources: [config/jwt.yaml, config/oauth.json]
+

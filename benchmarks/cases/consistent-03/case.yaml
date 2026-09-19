@@ -1,0 +1,10 @@
+id: consistent-03
+question: What authentication protocol is currently used, what is the intended target, and what is the status?
+ground_truth:
+  current: OAuth2
+  target: OAuth2
+  status: RESOLVED
+  valid_current_sources: [config/auth.yaml, config/auth.json]
+  valid_target_sources: [docs/adr/ADR-015.md]
+  required_conflict_sources: []
+

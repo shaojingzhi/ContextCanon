@@ -1,0 +1,10 @@
+id: intent-conflict-01
+question: What authentication protocol is currently used, what is the intended target, and what is the knowledge status?
+ground_truth:
+  current: JWT
+  target: null
+  status: AMBIGUOUS
+  valid_current_sources: [config/auth.yaml]
+  valid_target_sources: []
+  required_conflict_sources: [docs/adr/ADR-A.md, docs/adr/ADR-B.md]
+

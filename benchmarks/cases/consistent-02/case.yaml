@@ -1,0 +1,10 @@
+id: consistent-02
+question: What authentication protocol is currently used and what is the knowledge status?
+ground_truth:
+  current: JWT
+  target: null
+  status: RESOLVED
+  valid_current_sources: [README.md, config/auth.yaml, config/auth.json]
+  valid_target_sources: []
+  required_conflict_sources: []
+
