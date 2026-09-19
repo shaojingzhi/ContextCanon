@@ -5,7 +5,9 @@ import unittest
 
 from benchmarks.build_prompts import (
     SHARED_INSTRUCTIONS,
+    STABILITY_CASE_IDS,
     build_prompt,
+    export_prompts,
     load_cases,
 )
 from benchmarks.report import render_report
@@ -59,6 +61,8 @@ class BenchmarkTests(unittest.TestCase):
         self.assertIn("Additional structured context produced by ContextCanon", context)
         self.assertNotIn("ground_truth", raw)
         self.assertEqual(context, build_prompt(case, "contextcanon"))
+        self.assertIn("JSON null", SHARED_INSTRUCTIONS)
+        self.assertNotIn('"JWT or OAuth2 or null"', SHARED_INSTRUCTIONS)
 
     def test_pipeline_representative_cases_matches_ground_truth(self) -> None:
         for case_id in ("consistent-01", "diverged-01", "runtime-conflict-01", "intent-conflict-01"):
@@ -99,6 +103,79 @@ class BenchmarkTests(unittest.TestCase):
         self.assertEqual(score_case(case, prediction)["overall"], 4)
         self.assertEqual(validate_prediction(prediction)["evidence"]["conflict"][0], "config/jwt.yaml")
 
+    def test_correct_value_and_source_pass_traceability(self) -> None:
+        case = next(item for item in self.cases if item.id == "diverged-01")
+        prediction = {
+            "current": "JWT",
+            "target": "OAuth2",
+            "status": "DIVERGED",
+            "evidence": {
+                "current": ["config/auth.yaml"],
+                "target": ["docs/adr/ADR-015.md"],
+                "conflict": [],
+            },
+        }
+        self.assertEqual(score_case(case, prediction)["traceability"], 1)
+
+    def test_wrong_value_with_correct_source_fails_traceability(self) -> None:
+        case = next(item for item in self.cases if item.id == "diverged-01")
+        prediction = {
+            "current": "OAuth2",
+            "target": "OAuth2",
+            "status": "DIVERGED",
+            "evidence": {
+                "current": ["config/auth.yaml"],
+                "target": ["docs/adr/ADR-015.md"],
+                "conflict": [],
+            },
+        }
+        self.assertEqual(score_case(case, prediction)["traceability"], 0)
+
+    def test_correct_value_with_wrong_source_fails_traceability(self) -> None:
+        case = next(item for item in self.cases if item.id == "diverged-01")
+        prediction = {
+            "current": "JWT",
+            "target": "OAuth2",
+            "status": "DIVERGED",
+            "evidence": {
+                "current": ["wrong.yaml"],
+                "target": ["docs/adr/ADR-015-oauth.md"],
+                "conflict": [],
+            },
+        }
+        self.assertEqual(score_case(case, prediction)["traceability"], 0)
+
+    def test_ambiguous_case_missing_conflict_source_fails_traceability(self) -> None:
+        case = next(item for item in self.cases if item.id == "runtime-conflict-01")
+        prediction = {
+            "current": None,
+            "target": None,
+            "status": "AMBIGUOUS",
+            "evidence": {
+                "current": [],
+                "target": [],
+                "conflict": ["config/jwt.yaml"],
+            },
+        }
+        self.assertEqual(score_case(case, prediction)["traceability"], 0)
+
+    def test_stability_prompt_export_writes_only_selected_variants(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory)
+            export_prompts(output, self.cases)
+            for case in self.cases:
+                expected = 3 if case.id in STABILITY_CASE_IDS else 1
+                self.assertEqual(
+                    len(list((output / "raw").glob(f"{case.id}__*.txt"))),
+                    expected,
+                )
+                self.assertEqual(
+                    len(list((output / "contextcanon").glob(f"{case.id}__*.txt"))),
+                    expected,
+                )
+            self.assertTrue((output / "raw" / "diverged-01__reverse.txt").exists())
+            self.assertTrue((output / "contextcanon" / "diverged-01__permutation.txt").exists())
+
     def test_wrong_source_loses_traceability(self) -> None:
         case = next(item for item in self.cases if item.id == "diverged-01")
         prediction = {
@@ -128,12 +205,12 @@ class BenchmarkTests(unittest.TestCase):
         self.assertEqual(stability_rate({case.id: [prediction] * 3}), 1.0)
 
     def test_report_is_human_readable(self) -> None:
-        summary = summarize([])
+        summary = summarize([], stability=0.75)
         rendered = render_report(summary, summary)
         self.assertIn("Current Accuracy", rendered)
         self.assertIn("ContextCanon", rendered)
+        self.assertIn("75.0%", rendered)
 
 
 if __name__ == "__main__":
     unittest.main()
-

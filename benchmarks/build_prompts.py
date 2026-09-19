@@ -18,16 +18,33 @@ from contextcanon.sources import load_sources
 from contextcanon.verification import verify_claims
 
 
+STABILITY_CASE_IDS = frozenset(
+    {
+        "diverged-01",
+        "runtime-conflict-01",
+        "runtime-conflict-03",
+        "intent-conflict-01",
+        "order-noise-03",
+    }
+)
+
+
 SHARED_INSTRUCTIONS = """Use only supplied repository information.
 Do not guess. Distinguish current implementation from future architecture intent.
 Represent conflicting or insufficient knowledge explicitly.
 Cite repository paths supporting the answer.
-Return only valid JSON using this schema:
+Return only valid JSON. The `current` and `target` fields must be exactly one
+of: the string "JWT", the string "OAuth2", or JSON null (not the string
+"null"). Use this schema:
 {
-  "current": "JWT or OAuth2 or null",
-  "target": "JWT or OAuth2 or null",
+  "current": null,
+  "target": "OAuth2",
   "status": "RESOLVED | DIVERGED | AMBIGUOUS | UNVERIFIED",
-  "evidence": {"current": [], "target": [], "conflict": []}
+  "evidence": {
+    "current": [],
+    "target": ["docs/adr/ADR-015.md"],
+    "conflict": ["config/jwt.yaml", "config/oauth.json"]
+  }
 }
 """
 
@@ -134,19 +151,32 @@ def build_all_prompts(cases: Iterable[BenchmarkCase]) -> dict[str, dict[str, str
     }
 
 
+def export_prompts(output: Path, cases: Iterable[BenchmarkCase]) -> None:
+    output.mkdir(parents=True, exist_ok=True)
+    for case in cases:
+        orderings = (
+            ("canonical", "reverse", "permutation")
+            if case.id in STABILITY_CASE_IDS
+            else ("canonical",)
+        )
+        for condition in ("raw", "contextcanon"):
+            condition_dir = output / condition
+            condition_dir.mkdir(parents=True, exist_ok=True)
+            for ordering in orderings:
+                target = condition_dir / f"{case.id}__{ordering}.txt"
+                target.write_text(
+                    build_prompt(case, condition, ordering),
+                    encoding="utf-8",
+                )
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Export M5.5 benchmark prompts")
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
-    args.output.mkdir(parents=True, exist_ok=True)
-    for case in load_cases():
-        for condition in ("raw", "contextcanon"):
-            target = args.output / condition / f"{case.id}.txt"
-            target.parent.mkdir(parents=True, exist_ok=True)
-            target.write_text(build_prompt(case, condition), encoding="utf-8")
+    export_prompts(args.output, load_cases())
     return 0
 
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

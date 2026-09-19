@@ -58,10 +58,14 @@ def score_case(case: BenchmarkCase, prediction: object) -> dict[str, object]:
     status = answer["status"] == truth.get("status")
     evidence = answer["evidence"]
     traceable = True
-    if truth.get("current") is not None:
+    if current and truth.get("current") is not None:
         traceable &= bool(set(evidence["current"]) & _sources(truth, "valid_current_sources"))
-    if truth.get("target") is not None:
+    elif truth.get("current") is not None:
+        traceable = False
+    if target and truth.get("target") is not None:
         traceable &= bool(set(evidence["target"]) & _sources(truth, "valid_target_sources"))
+    elif truth.get("target") is not None:
+        traceable = False
     required_conflicts = _sources(truth, "required_conflict_sources")
     traceable &= required_conflicts <= set(evidence["conflict"])
     conflict = truth.get("status") in {"DIVERGED", "AMBIGUOUS"} and status
@@ -84,7 +88,11 @@ def load_predictions(root: Path, condition: str) -> dict[str, object]:
     return predictions
 
 
-def summarize(scores: Iterable[dict[str, object]], total_cases: int = 15) -> dict[str, object]:
+def summarize(
+    scores: Iterable[dict[str, object]],
+    total_cases: int = 15,
+    stability: float = 0.0,
+) -> dict[str, object]:
     rows = list(scores)
     conflict_cases = sum(row["is_conflict"] for row in rows)
     return {
@@ -94,6 +102,7 @@ def summarize(scores: Iterable[dict[str, object]], total_cases: int = 15) -> dic
         "status_accuracy": sum(row["status"] for row in rows) / total_cases,
         "traceability_rate": sum(row["traceability"] for row in rows) / total_cases,
         "conflict_detection_rate": sum(row["conflict_detection"] for row in rows) / max(conflict_cases, 1),
+        "stability_rate": stability,
         "overall_points": sum(row["overall"] for row in rows),
         "overall_possible": total_cases * 4,
     }
@@ -132,11 +141,26 @@ def main() -> int:
     for condition in ("raw", "contextcanon"):
         predictions = load_predictions(args.results, condition)
         scores = [score_case(case, predictions[case.id]) for case in cases if case.id in predictions]
-        report[condition] = {"cases": scores, "summary": summarize(scores)}
+        variants: dict[str, list[object]] = {}
+        for case in cases:
+            variant_predictions = [
+                predictions[key]
+                for key in (
+                    f"{case.id}__canonical",
+                    f"{case.id}__reverse",
+                    f"{case.id}__permutation",
+                )
+                if key in predictions
+            ]
+            if variant_predictions:
+                variants[case.id] = variant_predictions
+        report[condition] = {
+            "cases": scores,
+            "summary": summarize(scores, stability=stability_rate(variants)),
+        }
     print(json.dumps(report, indent=2, sort_keys=True))
     return 0
 
 
 if __name__ == "__main__":
     raise SystemExit(main())
-
