@@ -858,30 +858,29 @@ Divergences:     2
 ## Doctor
 
 ```bash
-contextcanon doctor
+contextcanon doctor [PATH]
 ```
 
 Purpose:
 
-Identify problematic knowledge.
+Run source loading, demo claim extraction, evidence verification and resolution
+in memory, then render every supported semantic property for human diagnosis.
+`PATH` defaults to the current directory. M4 does not depend on persisted scan
+state.
 
 Example:
 
 ```text
-DIVERGED auth.protocol
+Property: auth.protocol
 
 Current runtime:
-JWT
+  JWT
 
 Architecture intent:
-OAuth2
+  OAuth2
 
-Verified by:
-- config/auth.yaml
-- src/auth/provider.py
-
-Intent source:
-- docs/adr/ADR-015.md
+Status:
+  DIVERGED
 ```
 
 Potential issue classes:
