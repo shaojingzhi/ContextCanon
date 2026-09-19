@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable
 
-from .build_prompts import BenchmarkCase, load_cases
+from .build_prompts import STABILITY_CASE_IDS, BenchmarkCase, load_cases
 
 
 STATUSES = {"RESOLVED", "DIVERGED", "AMBIGUOUS", "UNVERIFIED"}
@@ -140,9 +140,15 @@ def main() -> int:
     report = {}
     for condition in ("raw", "contextcanon"):
         predictions = load_predictions(args.results, condition)
-        scores = [score_case(case, predictions[case.id]) for case in cases if case.id in predictions]
+        scores = [
+            score_case(case, predictions[f"{case.id}__canonical"])
+            for case in cases
+            if f"{case.id}__canonical" in predictions
+        ]
         variants: dict[str, list[object]] = {}
         for case in cases:
+            if case.id not in STABILITY_CASE_IDS:
+                continue
             variant_predictions = [
                 predictions[key]
                 for key in (

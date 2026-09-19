@@ -1,5 +1,8 @@
+import contextlib
+import io
 import json
 from pathlib import Path
+import sys
 import tempfile
 import unittest
 
@@ -12,6 +15,7 @@ from benchmarks.build_prompts import (
 )
 from benchmarks.report import render_report
 from benchmarks.scorer import (
+    main as scorer_main,
     score_case,
     stability_rate,
     stability_variants,
@@ -175,6 +179,50 @@ class BenchmarkTests(unittest.TestCase):
                 )
             self.assertTrue((output / "raw" / "diverged-01__reverse.txt").exists())
             self.assertTrue((output / "contextcanon" / "diverged-01__permutation.txt").exists())
+            for case in self.cases:
+                self.assertEqual(
+                    (output / "raw" / f"{case.id}__canonical.txt").stem,
+                    f"{case.id}__canonical",
+                )
+
+    def test_main_scores_canonical_predictions_and_stability_variants(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            results = Path(directory)
+            for condition in ("raw", "contextcanon"):
+                condition_dir = results / condition
+                condition_dir.mkdir()
+                for case in self.cases:
+                    truth = case.ground_truth
+                    prediction = {
+                        "current": truth["current"],
+                        "target": truth["target"],
+                        "status": truth["status"],
+                        "evidence": {
+                            "current": truth.get("valid_current_sources", [])[:1],
+                            "target": truth.get("valid_target_sources", [])[:1],
+                            "conflict": truth.get("required_conflict_sources", []),
+                        },
+                    }
+                    (condition_dir / f"{case.id}__canonical.json").write_text(
+                        json.dumps(prediction), encoding="utf-8"
+                    )
+                    if case.id in STABILITY_CASE_IDS:
+                        for ordering in ("reverse", "permutation"):
+                            (condition_dir / f"{case.id}__{ordering}.json").write_text(
+                                json.dumps(prediction), encoding="utf-8"
+                            )
+            previous_argv = sys.argv
+            output = io.StringIO()
+            try:
+                sys.argv = ["scorer", str(results)]
+                with contextlib.redirect_stdout(output):
+                    self.assertEqual(scorer_main(), 0)
+            finally:
+                sys.argv = previous_argv
+            report = json.loads(output.getvalue())
+            for condition in ("raw", "contextcanon"):
+                self.assertEqual(report[condition]["summary"]["cases_scored"], 15)
+                self.assertEqual(report[condition]["summary"]["stability_rate"], 1.0)
 
     def test_wrong_source_loses_traceability(self) -> None:
         case = next(item for item in self.cases if item.id == "diverged-01")
