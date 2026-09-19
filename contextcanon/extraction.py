@@ -95,7 +95,7 @@ def _text_assertions(
                         document,
                         location=f"line:{line_number}",
                         role=EvidenceRole.DOCUMENTED,
-                        content=raw_value,
+                        content=line,
                     ),
                 )
             )
@@ -111,7 +111,7 @@ def _text_assertions(
                         document,
                         location=f"line:{line_number}",
                         role=EvidenceRole.INTENDED,
-                        content=raw_value,
+                        content=line,
                     ),
                 )
             )

@@ -99,6 +99,28 @@ class DemoExtractionTests(unittest.TestCase):
         self.assertEqual(evidence.source_type, SourceType.ADR)
         self.assertEqual(evidence.location, "line:5")
         self.assertEqual(evidence.role, EvidenceRole.INTENDED)
+        self.assertEqual(evidence.content, "Target protocol: OAuth2")
+
+    def test_text_evidence_preserves_exact_source_line(self) -> None:
+        runtime_claim = next(
+            claim
+            for claim in self.claims
+            if claim.claim_type is ClaimType.RUNTIME_STATE
+        )
+        documented = next(
+            evidence
+            for evidence in runtime_claim.evidence
+            if evidence.role is EvidenceRole.DOCUMENTED
+        )
+        observed = [
+            evidence
+            for evidence in runtime_claim.evidence
+            if evidence.role is EvidenceRole.OBSERVED
+        ]
+
+        self.assertEqual(runtime_claim.value, "JWT")
+        self.assertEqual(documented.content, "Current protocol: JWT")
+        self.assertEqual([evidence.content for evidence in observed], ["jwt", "jwt"])
 
     def test_unaccepted_adr_does_not_create_architecture_intent(self) -> None:
         proposed = SourceDocument(

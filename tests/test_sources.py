@@ -61,6 +61,22 @@ class SourceLoaderTests(unittest.TestCase):
         self.assertTrue(config_loader.supports(Path("auth.yml")))
         self.assertFalse(config_loader.supports(Path("notes.txt")))
 
+    def test_load_sources_ignores_unsupported_files(self) -> None:
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "README.md").write_text(
+                "Current protocol: JWT\n",
+                encoding="utf-8",
+            )
+            (root / "notes.txt").write_text(
+                "Target protocol: OAuth2\n",
+                encoding="utf-8",
+            )
+
+            documents = load_sources(root)
+
+        self.assertEqual([document.path for document in documents], ["README.md"])
+
     def test_non_json_yaml_values_are_rejected(self) -> None:
         with TemporaryDirectory() as directory:
             root = Path(directory)
