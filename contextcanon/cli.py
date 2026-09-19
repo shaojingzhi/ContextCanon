@@ -8,8 +8,10 @@ import sys
 from collections.abc import Sequence
 from pathlib import Path
 
+from .assembly import assemble_context, source_revision, utc_timestamp
 from .core import Claim, ClaimType, Evidence, JSONValue, Resolution
 from .extraction import extract_demo_claims
+from .renderers import JSONRenderer, MarkdownRenderer
 from .resolution import DefaultResolutionPolicy
 from .sources import load_sources
 from .verification import verify_claims
@@ -30,6 +32,25 @@ def build_parser() -> argparse.ArgumentParser:
         nargs="?",
         default=".",
         help="repository directory to diagnose (default: current directory)",
+    )
+    build_parser = subparsers.add_parser(
+        "build",
+        help="build a structured context package",
+    )
+    build_parser.add_argument(
+        "task",
+        help="task recorded in the context package metadata",
+    )
+    build_parser.add_argument(
+        "--path",
+        default=".",
+        help="repository directory to build from (default: current directory)",
+    )
+    build_parser.add_argument(
+        "--format",
+        choices=("markdown", "json"),
+        default="markdown",
+        help="output format (default: markdown)",
     )
     return parser
 
@@ -115,29 +136,66 @@ def _render_resolution(
     return "\n".join(lines).rstrip()
 
 
-def _run_doctor(root: Path) -> int:
+def _validate_root(root: Path, *, command: str) -> bool:
     if not root.exists() or not root.is_dir():
         print(
-            f"contextcanon doctor: error: {root} is not a directory",
+            f"contextcanon {command}: error: {root} is not a directory",
             file=sys.stderr,
         )
-        return 2
+        return False
+    return True
 
+
+def _resolve_repository(
+    root: Path,
+) -> list[tuple[tuple[str, str], Resolution]]:
     documents = load_sources(root)
-    # M4 intentionally uses the deterministic V0.1 demo extractor.
+    # V0.1 intentionally uses the deterministic demo extractor.
     claims = extract_demo_claims(documents)
-    if not claims:
-        print("No supported knowledge claims found.")
-        return 0
-
     verify_claims(claims, documents)
     groups = _group_claims(claims)
     policy = DefaultResolutionPolicy()
-    rendered = [
-        _render_resolution(property_key, policy.resolve(groups[property_key]))
+    return [
+        (property_key, policy.resolve(groups[property_key]))
         for property_key in sorted(groups)
     ]
+
+
+def _run_doctor(root: Path) -> int:
+    if not _validate_root(root, command="doctor"):
+        return 2
+
+    resolved_properties = _resolve_repository(root)
+    if not resolved_properties:
+        print("No supported knowledge claims found.")
+        return 0
+
+    rendered = [
+        _render_resolution(property_key, resolution)
+        for property_key, resolution in resolved_properties
+    ]
     print("\n\n".join(rendered))
+    return 0
+
+
+def _run_build(root: Path, *, task: str, output_format: str) -> int:
+    if not _validate_root(root, command="build"):
+        return 2
+
+    policy = DefaultResolutionPolicy()
+    package = assemble_context(
+        task=task,
+        resolutions=[
+            resolution
+            for _, resolution in _resolve_repository(root)
+        ],
+        source_revision=source_revision(root),
+        created_at=utc_timestamp(),
+        policy_name=policy.name,
+        policy_version=policy.version,
+    )
+    renderer = JSONRenderer() if output_format == "json" else MarkdownRenderer()
+    print(renderer.render(package), end="")
     return 0
 
 
@@ -146,6 +204,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = parser.parse_args(argv)
     if args.command == "doctor":
         return _run_doctor(Path(args.path))
+    if args.command == "build":
+        return _run_build(
+            Path(args.path),
+            task=args.task,
+            output_format=args.format,
+        )
     parser.print_help()
     return 0
 

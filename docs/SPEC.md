@@ -648,6 +648,12 @@ hash(
 
 This allows two agent executions to compare exactly what knowledge was available.
 
+M5 derives the package ID from canonical JSON containing the task, source
+revision, policy metadata, selected claim identities, resolution state and
+reason codes, unresolved conflicts, and token budget. `created_at` and absolute
+repository paths are excluded, so rebuilding identical semantic input produces
+the same ID.
+
 ---
 
 ## 10.2 ContextPackage is not tied to an agent
@@ -681,6 +687,11 @@ MarkdownRenderer
 
 Agent-specific integration stays outside the core.
 
+`JSONRenderer` serializes `ContextPackage.to_dict()` as deterministic JSON.
+`MarkdownRenderer` presents package metadata, selected claims, evidence
+provenance, resolution state, reason codes, and unresolved knowledge without
+turning the artifact into an agent-specific prompt.
+
 ---
 
 # 11. Context Assembly
@@ -704,6 +715,14 @@ UNVERIFIED
 Within the same status, retrieval relevance may determine ordering.
 
 No sophisticated LLM context compression is required in V0.1.
+
+M5 performs the first minimal assembly step without retrieval or query-intent
+classification. The task is recorded for reproducibility but does not yet
+select claims: every semantic property discovered by the current extractor is
+assembled. `token_budget` is preserved as metadata; token counting, ordering by
+retrieval relevance, truncation, and compression remain future work. Evidence
+that explicitly failed verification is retained on its Claim but excluded from
+`ContextItem.supporting_evidence`.
 
 ---
 
@@ -898,10 +917,15 @@ SUPERSEDED
 ## Build
 
 ```bash
-contextcanon build "How does authentication currently work?"
+contextcanon build "How does authentication currently work?" [--path PATH]
 ```
 
-Output:
+M5 runs source loading, demo extraction, verification, resolution, and context
+assembly directly in memory. `--path` defaults to the current directory. The
+task string is package metadata only and does not yet drive retrieval or claim
+selection.
+
+Default Markdown output:
 
 ```text
 Context Package: ctx_81fa3c
@@ -939,6 +963,11 @@ Optional output format:
 ```bash
 contextcanon build "..." --format json
 ```
+
+The JSON form is the deterministic serialization of the same ContextPackage.
+Build succeeds even when the package contains diverged, ambiguous, or
+unverified knowledge, because those are represented knowledge states rather
+than command failures.
 
 ---
 
