@@ -191,6 +191,125 @@ class ContextAssemblyTests(unittest.TestCase):
         self.assertNotEqual(first.id, with_budget.id)
         self.assertNotEqual(first.id, resolved_state.id)
 
+    def test_package_id_changes_when_supporting_evidence_set_changes(self) -> None:
+        def build(evidence: list[Evidence]):
+            claim = Claim(
+                id="claim-runtime",
+                subject="auth",
+                predicate="protocol",
+                value="JWT",
+                claim_type=ClaimType.RUNTIME_STATE,
+                evidence=evidence,
+            )
+            return assemble_context(
+                task="task",
+                resolutions=[
+                    Resolution(
+                        status=ResolutionStatus.RESOLVED,
+                        selected_claims=[claim],
+                    )
+                ],
+                source_revision="abc123",
+                created_at="2026-09-20T01:00:00Z",
+                policy_name="default",
+                policy_version="0.1",
+            )
+
+        first = Evidence(
+            id="e-first",
+            source_id="config/auth.yaml",
+            source_type=SourceType.YAML,
+            location="auth.provider",
+            role=EvidenceRole.OBSERVED,
+            content="jwt",
+            verified=True,
+        )
+        second = Evidence(
+            id="e-second",
+            source_id="config/auth.json",
+            source_type=SourceType.JSON,
+            location="auth.provider",
+            role=EvidenceRole.OBSERVED,
+            content="jwt",
+            verified=True,
+        )
+
+        self.assertNotEqual(build([first]).id, build([first, second]).id)
+
+    def test_package_id_changes_when_supporting_evidence_content_changes(self) -> None:
+        def build(content: str):
+            evidence = Evidence(
+                id="e-auth",
+                source_id="config/auth.yaml",
+                source_type=SourceType.YAML,
+                location="auth.provider",
+                role=EvidenceRole.OBSERVED,
+                content=content,
+                verified=True,
+            )
+            claim = Claim(
+                id="claim-runtime",
+                subject="auth",
+                predicate="protocol",
+                value="JWT",
+                claim_type=ClaimType.RUNTIME_STATE,
+                evidence=[evidence],
+            )
+            return assemble_context(
+                task="task",
+                resolutions=[Resolution(
+                    status=ResolutionStatus.RESOLVED,
+                    selected_claims=[claim],
+                )],
+                source_revision="abc123",
+                created_at="2026-09-20T01:00:00Z",
+                policy_name="default",
+                policy_version="0.1",
+            )
+
+        self.assertNotEqual(build("jwt").id, build("oauth2").id)
+
+    def test_package_id_changes_when_supporting_evidence_verification_changes(self) -> None:
+        def build(verified: bool | None, verifier: str | None):
+            evidence = Evidence(
+                id="e-auth",
+                source_id="config/auth.yaml",
+                source_type=SourceType.YAML,
+                location="auth.provider",
+                role=EvidenceRole.OBSERVED,
+                content="jwt",
+                verified=verified,
+                verifier=verifier,
+            )
+            claim = Claim(
+                id="claim-runtime",
+                subject="auth",
+                predicate="protocol",
+                value="JWT",
+                claim_type=ClaimType.RUNTIME_STATE,
+                evidence=[evidence],
+            )
+            return assemble_context(
+                task="task",
+                resolutions=[Resolution(
+                    status=ResolutionStatus.RESOLVED,
+                    selected_claims=[claim],
+                )],
+                source_revision="abc123",
+                created_at="2026-09-20T01:00:00Z",
+                policy_name="default",
+                policy_version="0.1",
+            )
+
+        self.assertNotEqual(
+            build(True, "yaml-path").id,
+            build(False, "yaml-path").id,
+        )
+        self.assertNotEqual(
+            build(True, "yaml-path").id,
+            build(True, "other-verifier").id,
+        )
+
     def test_resolution_input_order_does_not_change_items_or_id(self) -> None:
         first_resolution = _resolved_claim("claim-z", "zeta")
         second_resolution = _resolved_claim("claim-a", "alpha")
@@ -244,4 +363,3 @@ class ContextAssemblyTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-

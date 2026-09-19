@@ -42,6 +42,18 @@ def _evidence_key(evidence: Evidence) -> tuple[str, str, str]:
     return (evidence.source_id, evidence.location, evidence.id)
 
 
+def _evidence_identity(evidence: Evidence) -> dict[str, JSONValue]:
+    return {
+        "id": evidence.id,
+        "source_id": evidence.source_id,
+        "location": evidence.location,
+        "role": evidence.role.value,
+        "content": evidence.content,
+        "verified": evidence.verified,
+        "verifier": evidence.verifier,
+    }
+
+
 def _resolution_identity(resolution: Resolution) -> dict[str, JSONValue]:
     return {
         "status": resolution.status.value,
@@ -108,6 +120,10 @@ def _package_id(
                 "claim_id": item.claim.id,
                 "resolution_status": item.resolution_status.value,
                 "reason_codes": [reason.value for reason in item.reason_codes],
+                "supporting_evidence": [
+                    _evidence_identity(evidence)
+                    for evidence in item.supporting_evidence
+                ],
             }
             for item in items
         ],
@@ -181,4 +197,3 @@ def assemble_context(
         unresolved_conflicts=unresolved_conflicts,
         token_budget=token_budget,
     )
-
