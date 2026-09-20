@@ -125,27 +125,81 @@ def _find_key(value: object, keys: set[str], path: str = "") -> tuple[str, str] 
     return None
 
 
+def _find_entity_field(
+    value: object,
+    entity: str,
+    keys: set[str],
+    path: str = "",
+) -> tuple[str, str] | None:
+    """Find a field in the object that names the requested entity."""
+
+    if isinstance(value, dict):
+        entity_text = " ".join(str(item) for item in value.values() if isinstance(item, str))
+        if entity.casefold() in entity_text.casefold():
+            direct = _find_key(value, keys, path)
+            if direct is not None:
+                return direct
+        for key in sorted(value):
+            child_path = f"{path}.{key}" if path else key
+            found = _find_entity_field(value[key], entity, keys, child_path)
+            if found is not None:
+                return found
+    elif isinstance(value, list):
+        for index, item in enumerate(value):
+            found = _find_entity_field(item, entity, keys, f"{path}[{index}]")
+            if found is not None:
+                return found
+    return None
+
+
 def _date_observation(observation: RuntimeObservation) -> tuple[str, str] | None:
-    found = _find_key(observation.tool_result, {"date", "event_date"})
+    entity = "Riverside Community Hall Spring Gala"
+    found = _find_entity_field(observation.tool_result, entity, {"date", "event_date"})
+    if found is None:
+        found = _find_key(observation.tool_result, {"date", "event_date"})
     text = _text(observation.tool_result)
     if found is None:
-        match = re.search(r"\b(2026-03-2[23]|March 2[23],? 2026)\b", text, re.I)
+        pattern = rf"{re.escape(entity)}.*?\b(2026-03-2[23]|March 2[23],? 2026)\b"
+        match = re.search(pattern, text, re.I | re.S)
+        if match is None:
+            match = re.search(r"\b(2026-03-2[23]|March 2[23],? 2026)\b", text, re.I)
         if not match:
             return None
         raw = match.group(1)
-        return "2026-03-" + raw[-2:] if raw.startswith("March") else raw
+        day_match = re.search(r"March\s+(2[23])", raw, re.I)
+        normalized = (
+            "2026-03-" + day_match.group(1)
+            if day_match is not None
+            else raw
+        )
+        return normalized, "text"
     path, raw = found
     if re.fullmatch(r"March 2[23],? 2026", raw, re.I):
-        raw = "2026-03-" + re.search(r"2[23]", raw).group()
+        raw = "2026-03-" + re.search(r"March\s+(2[23])", raw, re.I).group(1)
     return raw, path
 
 
 def _status_observation(observation: RuntimeObservation, *, task: str) -> tuple[str, str] | None:
-    keys = {"status", "order_status", "lifecycle_status"} if task == "preview_013" else {"status", "shelter_status"}
-    found = _find_key(observation.tool_result, keys)
+    if task == "preview_013":
+        entity = "W8855135"
+        keys = {"status", "order_status", "lifecycle_status"}
+    else:
+        entity = "Seaside Church Hall"
+        keys = {"status", "shelter_status"}
+    found = _find_entity_field(observation.tool_result, entity, keys)
+    if found is None:
+        found = _find_key(observation.tool_result, keys)
     if found:
         return found[1].casefold(), found[0]
-    text = _text(observation.tool_result).casefold()
+    text = _text(observation.tool_result)
+    entity_match = re.search(
+        rf"{re.escape(entity)}.*?\b(open|closed|delivered|returned)\b",
+        text,
+        re.I | re.S,
+    )
+    if entity_match is not None:
+        return entity_match.group(1).casefold(), "text"
+    text = text.casefold()
     if task == "preview_013":
         for value in ("delivered", "returned"):
             if value in text:

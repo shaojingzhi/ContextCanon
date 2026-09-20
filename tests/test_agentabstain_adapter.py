@@ -54,6 +54,54 @@ class AgentAbstainAdapterTests(unittest.TestCase):
         )
         self.assertEqual(adapter.ledger.claims[0].evidence.location, "call:0:date")
 
+    def test_plain_text_event_dates_produce_a_conflict(self) -> None:
+        adapter = AgentAbstainAdapter()
+        adapter.observe_tool_result(
+            RuntimeObservation(
+                "filesystem.read",
+                "lookup",
+                {"path": "event-info.txt"},
+                "Riverside Community Hall Spring Gala\nDate: March 22, 2026",
+                True,
+                0,
+            )
+        )
+        adapter.observe_tool_result(
+            RuntimeObservation(
+                "event_system.event_search",
+                "lookup",
+                {},
+                "Riverside Community Hall Spring Gala is scheduled for March 23, 2026.",
+                True,
+                1,
+            )
+        )
+        self.assertEqual([claim.value for claim in adapter.ledger.claims], ["2026-03-22", "2026-03-23"])
+        self.assertEqual(len(adapter.ledger.conflicts()), 1)
+
+    def test_shelter_extraction_uses_the_named_entity(self) -> None:
+        adapter = AgentAbstainAdapter()
+        result = {
+            "shelters": [
+                {"name": "Harborview Middle School", "status": "open"},
+                {"name": "Bayview Civic Center", "status": "open"},
+                {"name": "Seaside Church Hall", "status": "closed"},
+            ]
+        }
+        adapter.observe_tool_result(
+            RuntimeObservation(
+                "disaster_relief_operations.get_district_situation",
+                "lookup",
+                {},
+                result,
+                True,
+                0,
+            )
+        )
+        self.assertEqual(len(adapter.ledger.claims), 1)
+        claim = adapter.ledger.claims[0]
+        self.assertEqual((claim.subject, claim.predicate, claim.value), ("shelter/Seaside Church Hall", "status", "closed"))
+
     def test_failed_tool_call_is_not_evidence(self) -> None:
         adapter = _adapter("preview_013", {"status": "delivered"}, {"status": "returned"}, success=False)
         self.assertEqual([claim.value for claim in adapter.ledger.claims], ["returned"])
