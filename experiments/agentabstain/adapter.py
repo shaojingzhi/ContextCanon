@@ -152,10 +152,24 @@ def _find_entity_field(
     return None
 
 
+def _contains_entity_records(value: object, identity_keys: set[str]) -> bool:
+    """Return whether a result contains identifiable entity records."""
+
+    if isinstance(value, dict):
+        if any(key.casefold() in identity_keys for key in value):
+            return True
+        return any(_contains_entity_records(item, identity_keys) for item in value.values())
+    if isinstance(value, list):
+        return any(_contains_entity_records(item, identity_keys) for item in value)
+    return False
+
+
 def _date_observation(observation: RuntimeObservation) -> tuple[str, str] | None:
     entity = "Riverside Community Hall Spring Gala"
     found = _find_entity_field(observation.tool_result, entity, {"date", "event_date"})
     if found is None:
+        if _contains_entity_records(observation.tool_result, {"name", "title", "event_name"}):
+            return None
         found = _find_key(observation.tool_result, {"date", "event_date"})
     text = _text(observation.tool_result)
     if found is None:
@@ -188,6 +202,13 @@ def _status_observation(observation: RuntimeObservation, *, task: str) -> tuple[
         keys = {"status", "shelter_status"}
     found = _find_entity_field(observation.tool_result, entity, keys)
     if found is None:
+        identity_keys = (
+            {"order_id", "order_number", "order", "id"}
+            if task == "preview_013"
+            else {"name", "shelter_name", "facility", "facility_name"}
+        )
+        if _contains_entity_records(observation.tool_result, identity_keys):
+            return None
         found = _find_key(observation.tool_result, keys)
     if found:
         return found[1].casefold(), found[0]

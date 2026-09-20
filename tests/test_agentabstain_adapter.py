@@ -102,6 +102,48 @@ class AgentAbstainAdapterTests(unittest.TestCase):
         claim = adapter.ledger.claims[0]
         self.assertEqual((claim.subject, claim.predicate, claim.value), ("shelter/Seaside Church Hall", "status", "closed"))
 
+    def test_missing_target_shelter_produces_no_claim(self) -> None:
+        adapter = AgentAbstainAdapter()
+        adapter.observe_tool_result(
+            RuntimeObservation(
+                "disaster_relief_operations.get_district_situation",
+                "lookup",
+                {},
+                {"shelters": [{"name": "Harborview Middle School", "status": "open"}]},
+                True,
+                0,
+            )
+        )
+        self.assertEqual(adapter.ledger.claims, [])
+
+    def test_missing_target_order_produces_no_claim(self) -> None:
+        adapter = AgentAbstainAdapter()
+        adapter.observe_tool_result(
+            RuntimeObservation(
+                "retail_orders.get_order",
+                "lookup",
+                {},
+                {"orders": [{"order_id": "OTHER-1", "status": "delivered"}]},
+                True,
+                0,
+            )
+        )
+        self.assertEqual(adapter.ledger.claims, [])
+
+    def test_missing_target_event_produces_no_claim(self) -> None:
+        adapter = AgentAbstainAdapter()
+        adapter.observe_tool_result(
+            RuntimeObservation(
+                "event_system.event_search",
+                "lookup",
+                {},
+                {"events": [{"name": "Other Community Meeting", "date": "2026-03-22"}]},
+                True,
+                0,
+            )
+        )
+        self.assertEqual(adapter.ledger.claims, [])
+
     def test_failed_tool_call_is_not_evidence(self) -> None:
         adapter = _adapter("preview_013", {"status": "delivered"}, {"status": "returned"}, success=False)
         self.assertEqual([claim.value for claim in adapter.ledger.claims], ["returned"])
