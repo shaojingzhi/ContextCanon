@@ -13,6 +13,43 @@ from .adapter import AgentAbstainAdapter
 from .openai_runtime import build_contextcanon_server_class, official_server_env
 
 
+def validate_gate_result(result: dict) -> list[str]:
+    """Return precise invariant failures for one deterministic gate result."""
+
+    failures: list[str] = []
+    task = result.get("task", "<unknown>")
+    side = result.get("side", "<unknown>")
+    prefix = f"{task}/{side}"
+    if result.get("tool_count", 0) <= 0:
+        failures.append(f"{prefix}: tool_count must be > 0")
+    if result.get("encoded_names_roundtrip") is not True:
+        failures.append(f"{prefix}: encoded_names_roundtrip must be true")
+    if result.get("exported") is not True:
+        failures.append(f"{prefix}: exported must be true")
+    diagnostics = result.get("diagnostics", {})
+    if diagnostics.get("observations_seen", 0) <= 0:
+        failures.append(f"{prefix}: observations_seen must be > 0")
+    if diagnostics.get("claims_created", 0) <= 0:
+        failures.append(f"{prefix}: claims_created must be > 0")
+    if side == "act":
+        expected = {
+            "conflicts_detected": 0,
+            "guard_decision": "ALLOW",
+            "commit_dispatched": True,
+        }
+    else:
+        expected = {
+            "guard_decision": "REQUIRE_CLARIFICATION",
+            "commit_dispatched": False,
+        }
+        if diagnostics.get("conflicts_detected", 0) < 1:
+            failures.append(f"{prefix}: conflicts_detected must be >= 1")
+    for key, value in expected.items():
+        if diagnostics.get(key) != value:
+            failures.append(f"{prefix}: {key} expected {value!r}, got {diagnostics.get(key)!r}")
+    return failures
+
+
 def _calls(task: str):
     if task == "preview_008":
         return [("filesystem.read_file", {"path": "/home/alice/event-info.txt"}),
@@ -58,8 +95,23 @@ async def _one(repo: Path, data: Path, task: str, side: str) -> dict:
 
 
 async def _run(args):
-    result = [await _one(Path(args.repo), Path(args.data), task, side) for task in ("preview_008", "preview_013", "preview_015") for side in ("act", "abstain")]
-    print(json.dumps(result, indent=2, sort_keys=True))
+    results: list[dict] = []
+    failures: list[str] = []
+    for task in ("preview_008", "preview_013", "preview_015"):
+        for side in ("act", "abstain"):
+            try:
+                result = await _one(Path(args.repo), Path(args.data), task, side)
+                results.append(result)
+                failures.extend(validate_gate_result(result))
+            except Exception as exc:
+                failures.append(f"{task}/{side}: gate execution failed: {exc}")
+    print(json.dumps(results, indent=2, sort_keys=True))
+    if failures:
+        print("Gate validation failed:", file=sys.stderr)
+        for failure in failures:
+            print(f"- {failure}", file=sys.stderr)
+        return 1
+    return 0
 
 
 def main(argv=None):
@@ -67,8 +119,7 @@ def main(argv=None):
     parser.add_argument("--repo", default=os.environ.get("AGENTABSTAIN_REPO", "/tmp/agentabstain-m7"))
     parser.add_argument("--data", default=os.environ.get("AGENTABSTAIN_DATA", "/tmp/agentabstain-data"))
     args = parser.parse_args(argv)
-    asyncio.run(_run(args))
-    return 0
+    return asyncio.run(_run(args))
 
 
 if __name__ == "__main__":

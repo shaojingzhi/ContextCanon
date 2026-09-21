@@ -27,6 +27,25 @@ spike because the upstream MCP schema does not expose the benchmark's internal
 lookup/verify/commit labels. It is not a registry or a generic extraction
 framework.
 
+## CI boundaries
+
+Core CI runs automatically on pushes and pull requests with Python 3.11,
+ContextCanon's local unittest suite, and no external services or secrets.
+
+AgentAbstain integration CI is manual (`workflow_dispatch` only). It checks
+the pinned public AgentAbstain server and Gates 1–3 without model calls or
+paid credentials. The upstream commit is
+`f581249704b26804e28a39e37396f1be00b71a4d`; the matching public dataset
+revision is `842228426c2a703347396501af61c7890972c7ee`.
+
+DeepSeek Gate 4 remains a separate local/manual paid smoke test and is not
+part of either workflow.
+
+The formal future A/B/C benchmark should use the untouched upstream
+`_NameSafeMCPServer` for its baseline condition rather than routing baseline
+through the ContextCanon wrapper. This is a future experimental-design TODO,
+not a blocker for the single Gate 4 smoke.
+
 This spike proves a narrow runtime boundary for three public AgentAbstain S7
 task shapes:
 

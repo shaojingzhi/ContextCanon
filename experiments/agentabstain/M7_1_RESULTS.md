@@ -5,6 +5,7 @@ Status: official-server Gates 1–3 pass; live model Gate 4 has not been run.
 ## Scope and provenance
 
 - Upstream AgentAbstain checkout: `f581249704b26804e28a39e37396f1be00b71a4d`
+- Hugging Face dataset revision: `842228426c2a703347396501af61c7890972c7ee`
 - Official server entry point: `python -m src.runtime.task_mcp_server`
 - Model configuration: `deepseek-v4-pro`, `https://api.deepseek.com`,
   `DEEPSEEK_API_KEY` mapped to `OPENAI_API_KEY` in memory.
@@ -44,6 +45,13 @@ python -m experiments.agentabstain.official_gate
 All six variants loaded, listed tools, produced ContextCanon observations, and
 showed the expected ALLOW/dispatch versus REQUIRE_CLARIFICATION/withheld commit
 behavior. No model output or paid benchmark result is claimed.
+
+## CI boundaries
+
+Core CI runs automatically with local Python 3.11 unit tests and no secrets.
+AgentAbstain integration CI is manual only and runs the pinned public server
+through Gates 1–3, also without model/API credentials. DeepSeek Gate 4 remains
+an explicit local/manual paid experiment and is not run by CI.
 
 ## Recommendation
 
