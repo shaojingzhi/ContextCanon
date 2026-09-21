@@ -7,6 +7,22 @@ from experiments.agentabstain.official_gate import validate_gate_result
 
 
 class OpenAIRuntimeTests(unittest.TestCase):
+    @staticmethod
+    def _gate_result(side: str, *, executed_tools: list[str], **diagnostic_overrides: object) -> dict:
+        diagnostics = {
+            "observations_seen": 1, "claims_created": 1, "commit_attempted": True,
+            "conflicts_detected": 0 if side == "act" else 1,
+            "guard_decision": "ALLOW" if side == "act" else "REQUIRE_CLARIFICATION",
+            "commit_dispatched": side == "act",
+        }
+        diagnostics.update(diagnostic_overrides)
+        return {
+            "task": "preview_008", "side": side, "tool_count": 1,
+            "encoded_names_roundtrip": True, "exported": True,
+            "expected_commit_tool": "phone_and_messages.send_phone_message",
+            "executed_tools": executed_tools, "diagnostics": diagnostics,
+        }
+
     def test_encoded_tool_names_decode_to_canonical_names(self) -> None:
         mapping = {"industrial_and_infrastructure_control__event_search": "industrial_and_infrastructure_control.event_search"}
         self.assertEqual(
@@ -30,33 +46,41 @@ class OpenAIRuntimeTests(unittest.TestCase):
                 os.environ["AGENTABSTAIN_DATA"] = old
 
     def test_gate_validation_accepts_valid_act(self) -> None:
-        self.assertEqual(validate_gate_result({
-            "task": "preview_008", "side": "act", "tool_count": 1,
-            "encoded_names_roundtrip": True, "exported": True,
-            "diagnostics": {"observations_seen": 1, "claims_created": 1,
-                             "conflicts_detected": 0, "guard_decision": "ALLOW",
-                             "commit_dispatched": True},
-        }), [])
+        self.assertEqual(validate_gate_result(self._gate_result(
+            "act", executed_tools=["phone_and_messages.send_phone_message"])), [])
+
+    def test_gate_validation_rejects_act_log_without_commit(self) -> None:
+        failures = validate_gate_result(self._gate_result("act", executed_tools=[]))
+        self.assertIn("expected commit tool was not present", "\n".join(failures))
 
     def test_gate_validation_rejects_act_regressions(self) -> None:
         result = {"task": "preview_008", "side": "act", "tool_count": 0,
                   "encoded_names_roundtrip": False, "exported": False,
+                  "expected_commit_tool": "phone_and_messages.send_phone_message", "executed_tools": [],
                   "diagnostics": {"observations_seen": 0, "claims_created": 0,
-                                   "conflicts_detected": 1, "guard_decision": "REQUIRE_CLARIFICATION",
+                                   "commit_attempted": False, "conflicts_detected": 1, "guard_decision": "REQUIRE_CLARIFICATION",
                                    "commit_dispatched": False}}
         failures = validate_gate_result(result)
         self.assertGreaterEqual(len(failures), 7)
 
     def test_gate_validation_accepts_and_rejects_abstain(self) -> None:
-        valid = {"task": "preview_008", "side": "abstain", "tool_count": 1,
-                 "encoded_names_roundtrip": True, "exported": True,
-                 "diagnostics": {"observations_seen": 1, "claims_created": 1,
-                                  "conflicts_detected": 1, "guard_decision": "REQUIRE_CLARIFICATION",
-                                  "commit_dispatched": False}}
+        valid = self._gate_result("abstain", executed_tools=[])
         self.assertEqual(validate_gate_result(valid), [])
         invalid = dict(valid)
         invalid["diagnostics"] = dict(valid["diagnostics"], conflicts_detected=0, commit_dispatched=True)
         self.assertEqual(len(validate_gate_result(invalid)), 2)
+
+    def test_gate_validation_rejects_blocked_commit_in_official_log(self) -> None:
+        failures = validate_gate_result(self._gate_result(
+            "abstain", executed_tools=["phone_and_messages.send_phone_message"]
+        ))
+        self.assertIn("blocked commit tool unexpectedly appeared", "\n".join(failures))
+
+    def test_gate_validation_rejects_unattempted_commit(self) -> None:
+        failures = validate_gate_result(self._gate_result(
+            "abstain", executed_tools=[], commit_attempted=False
+        ))
+        self.assertIn("commit_attempted must be true", "\n".join(failures))
 
 
 if __name__ == "__main__":

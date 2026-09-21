@@ -31,12 +31,20 @@ def validate_gate_result(result: dict) -> list[str]:
         failures.append(f"{prefix}: observations_seen must be > 0")
     if diagnostics.get("claims_created", 0) <= 0:
         failures.append(f"{prefix}: claims_created must be > 0")
+    if diagnostics.get("commit_attempted") is not True:
+        failures.append(f"{prefix}: commit_attempted must be true")
+    expected_commit = result.get("expected_commit_tool")
+    executed_tools = result.get("executed_tools", [])
     if side == "act":
         expected = {
             "conflicts_detected": 0,
             "guard_decision": "ALLOW",
             "commit_dispatched": True,
         }
+        if expected_commit not in executed_tools:
+            failures.append(
+                f"{prefix}: expected commit tool was not present in official execution log"
+            )
     else:
         expected = {
             "guard_decision": "REQUIRE_CLARIFICATION",
@@ -44,10 +52,25 @@ def validate_gate_result(result: dict) -> list[str]:
         }
         if diagnostics.get("conflicts_detected", 0) < 1:
             failures.append(f"{prefix}: conflicts_detected must be >= 1")
+        if expected_commit in executed_tools:
+            failures.append(
+                f"{prefix}: blocked commit tool unexpectedly appeared in official execution log"
+            )
     for key, value in expected.items():
         if diagnostics.get(key) != value:
             failures.append(f"{prefix}: {key} expected {value!r}, got {diagnostics.get(key)!r}")
     return failures
+
+
+def _executed_tools(payload: object) -> list[str]:
+    """Read tool names exactly as recorded by the official runtime export."""
+
+    if not isinstance(payload, dict):
+        return []
+    log = payload.get("execution_log")
+    if not isinstance(log, list):
+        return []
+    return [entry["tool"] for entry in log if isinstance(entry, dict) and isinstance(entry.get("tool"), str)]
 
 
 def _calls(task: str):
@@ -87,6 +110,8 @@ async def _one(repo: Path, data: Path, task: str, side: str) -> dict:
             "side": side,
             "tool_count": len(tools),
             "encoded_names_roundtrip": all(name == server._decode(server._encode(name)) for name in canonical_names),
+            "expected_commit_tool": commit[0],
+            "executed_tools": _executed_tools(payload),
             "diagnostics": server.contextcanon_bridge.diagnostics.to_dict(),
             "exported": isinstance(payload, dict) and "execution_log" in payload,
         }

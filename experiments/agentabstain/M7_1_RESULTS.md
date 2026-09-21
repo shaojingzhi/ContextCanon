@@ -22,7 +22,9 @@ Status: official-server Gates 1–3 pass; live model Gate 4 has not been run.
    claims. Governed results receive a runtime-evidence block before the next
    model turn.
 3. **PASS.** Commit calls are evaluated before dispatch; guard conflicts return an MCP
-   error result without calling the upstream server.
+   error result without calling the upstream server. Gate validation checks both
+   bridge diagnostics and the official exported `execution_log` for the expected
+   dispatched or withheld commit tool.
 4. Real DeepSeek smoke: **not run** (`DEEPSEEK_API_KEY` was unavailable and is
    intentionally not requested in M7.2).
 5. Six guard rollouts: **not run**; they require Gate 4 and a paid API key.
