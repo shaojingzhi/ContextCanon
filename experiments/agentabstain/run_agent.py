@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any
 
 from .adapter import AgentAbstainAdapter
-from .openai_runtime import build_contextcanon_server_class
+from .openai_runtime import build_contextcanon_server_class, official_server_env
 
 TASKS = ("preview_008", "preview_013", "preview_015")
 SIDES = ("act", "abstain")
@@ -68,7 +68,7 @@ async def run_one(args: argparse.Namespace, task: str, side: str) -> dict[str, A
     server_type = build_contextcanon_server_class(args.agentabstain_repo)
     server = server_type(
         name="task_env",
-        params={"command": sys.executable, "args": build_server_args(bundle), "cwd": str(args.agentabstain_repo)},
+        params={"command": sys.executable, "args": build_server_args(bundle), "cwd": str(args.agentabstain_repo), "env": official_server_env()},
         tool_filter={"blocked_tool_names": [export_name]},
         adapter=AgentAbstainAdapter(),
         condition=args.condition,

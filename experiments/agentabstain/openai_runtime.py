@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sys
+import os
 from pathlib import Path
 from typing import Any
 
@@ -39,6 +40,16 @@ def canonical_tool_name(encoded_name: str, encoded_to_original: dict[str, str]) 
     """Decode the OpenAI-safe name using the upstream server's mapping."""
 
     return encoded_to_original.get(encoded_name, encoded_name)
+
+
+def official_server_env() -> dict[str, str]:
+    """Pass only the official dataset path and import path to the subprocess."""
+
+    return {
+        key: os.environ[key]
+        for key in ("AGENTABSTAIN_DATA", "PYTHONPATH")
+        if os.environ.get(key)
+    }
 
 
 def build_contextcanon_server_class(agentabstain_repo: str | Path):

@@ -10,7 +10,7 @@ import sys
 from pathlib import Path
 
 from .adapter import AgentAbstainAdapter
-from .openai_runtime import build_contextcanon_server_class
+from .openai_runtime import build_contextcanon_server_class, official_server_env
 
 
 def _calls(task: str):
@@ -31,17 +31,28 @@ async def _one(repo: Path, data: Path, task: str, side: str) -> dict:
     from src.types.BaseAgent import BaseAgent
     bundle = BaseAgent.load_task_bundle("conflicting_evidence", task, side)
     server_type = build_contextcanon_server_class(repo)
-    server = server_type(name="task_env", params={"command": sys.executable, "args": build_runtime_server_args(bundle), "cwd": str(repo)}, tool_filter={"blocked_tool_names": [RUNTIME_EXPORT_TOOL_NAME]}, adapter=AgentAbstainAdapter(), condition="guard")
+    server = server_type(name="task_env", params={"command": sys.executable, "args": build_runtime_server_args(bundle), "cwd": str(repo), "env": official_server_env()}, tool_filter={"blocked_tool_names": [RUNTIME_EXPORT_TOOL_NAME]}, adapter=AgentAbstainAdapter(), condition="guard")
     try:
         await server.connect()
-        await server.list_tools()
+        tools = await server.list_tools()
+        canonical_names = [server._decode(tool.name) for tool in tools]
         reads, commit = _calls(task)
         for name, args in reads:
             encoded = server._encode(name)
             await server.call_tool(encoded, args)
         await server.call_tool(server._encode(commit[0]), commit[1])
         export = await server.call_tool(RUNTIME_EXPORT_TOOL_NAME, {})
-        return {"task": task, "side": side, "diagnostics": server.contextcanon_bridge.diagnostics.to_dict(), "exported": bool(getattr(export, "structuredContent", None))}
+        payload = getattr(export, "structuredContent", None)
+        if payload is None:
+            payload = getattr(export, "structured_content", None)
+        return {
+            "task": task,
+            "side": side,
+            "tool_count": len(tools),
+            "encoded_names_roundtrip": all(name == server._decode(server._encode(name)) for name in canonical_names),
+            "diagnostics": server.contextcanon_bridge.diagnostics.to_dict(),
+            "exported": isinstance(payload, dict) and "execution_log" in payload,
+        }
     finally:
         await server.cleanup()
 

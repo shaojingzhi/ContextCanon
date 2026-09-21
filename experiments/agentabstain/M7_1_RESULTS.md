@@ -1,7 +1,6 @@
 # M7.1 real Agent loop integration
 
-Status: implementation complete; live model gates pending an explicit
-DeepSeek key.
+Status: official-server Gates 1–3 pass; live model Gate 4 has not been run.
 
 ## Scope and provenance
 
@@ -13,31 +12,38 @@ DeepSeek key.
 
 ## Gates
 
-1. The wrapper uses the official runtime server arguments and upstream
+1. **PASS.** The wrapper uses the official runtime server arguments and upstream
    OpenAI-safe tool-name encoding/decoding. The upstream MCP schema does not
    expose tool kind metadata, so the six-task spike uses an explicit bounded
    mapping for known tools.
-2. Lookup/verify results are intercepted after MCP dispatch. MCP-level
+2. **PASS.** Lookup/verify results are intercepted after MCP dispatch. MCP-level
    `isError` results are recorded as failed observations and do not create
    claims. Governed results receive a runtime-evidence block before the next
    model turn.
-3. Commit calls are evaluated before dispatch; guard conflicts return an MCP
+3. **PASS.** Commit calls are evaluated before dispatch; guard conflicts return an MCP
    error result without calling the upstream server.
-4. Real DeepSeek smoke: **not run** (`DEEPSEEK_API_KEY` was unavailable).
+4. Real DeepSeek smoke: **not run** (`DEEPSEEK_API_KEY` was unavailable and is
+   intentionally not requested in M7.2).
 5. Six guard rollouts: **not run**; they require Gate 4 and a paid API key.
 
-The checked-out upstream snapshot currently cannot start its official server:
-it is missing `abstention_factory.environments.agriculture_and_yield`, which is
-imported by the upstream environment registry. This is recorded as an external
-checkout/data blocker; no upstream files were modified.
+The pinned release expects the downloaded dataset's `environments/` packages
+to be exposed through `abstention_factory.environments.__path__`. The stdio
+client intentionally inherits only a safe environment subset, so
+`AGENTABSTAIN_DATA` must be passed explicitly in the server subprocess
+parameters. M7.2 applies that transparent setup fix; no upstream files or
+benchmark artifacts are modified. The registry imports all 42 environment
+classes, and the official server lists tools for all six selected variants
+with encoded-name round trips.
 
-The deterministic official-server gate can be run without a model:
+The deterministic official-server gate was run without a model:
 
 ```bash
 python -m experiments.agentabstain.official_gate
 ```
 
-No model output or paid benchmark result is claimed by this spike.
+All six variants loaded, listed tools, produced ContextCanon observations, and
+showed the expected ALLOW/dispatch versus REQUIRE_CLARIFICATION/withheld commit
+behavior. No model output or paid benchmark result is claimed.
 
 ## Recommendation
 
