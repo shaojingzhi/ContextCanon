@@ -34,6 +34,7 @@ async def _one(repo: Path, data: Path, task: str, side: str) -> dict:
     server = server_type(name="task_env", params={"command": sys.executable, "args": build_runtime_server_args(bundle), "cwd": str(repo)}, tool_filter={"blocked_tool_names": [RUNTIME_EXPORT_TOOL_NAME]}, adapter=AgentAbstainAdapter(), condition="guard")
     try:
         await server.connect()
+        await server.list_tools()
         reads, commit = _calls(task)
         for name, args in reads:
             encoded = server._encode(name)

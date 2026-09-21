@@ -26,6 +26,11 @@ DeepSeek key.
 4. Real DeepSeek smoke: **not run** (`DEEPSEEK_API_KEY` was unavailable).
 5. Six guard rollouts: **not run**; they require Gate 4 and a paid API key.
 
+The checked-out upstream snapshot currently cannot start its official server:
+it is missing `abstention_factory.environments.agriculture_and_yield`, which is
+imported by the upstream environment registry. This is recorded as an external
+checkout/data blocker; no upstream files were modified.
+
 The deterministic official-server gate can be run without a model:
 
 ```bash
