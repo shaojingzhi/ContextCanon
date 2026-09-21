@@ -19,6 +19,7 @@ CONDITIONS = ("baseline", "governed", "guard")
 
 
 def _upstream(repo: Path):
+    repo = Path(repo)
     repo = repo.expanduser().resolve()
     if not repo.exists():
         raise SystemExit("Set --agentabstain-repo to a local AgentAbstain checkout.")

@@ -59,3 +59,30 @@ an explicit local/manual paid experiment and is not run by CI.
 
 CONDITIONAL GO — the official MCP bridge and local guard gates are ready; run
 the single abstain smoke before authorizing the six guard rollouts.
+
+## Gate 4 — Real DeepSeek smoke
+
+- Date: 2026-09-21
+- ContextCanon commit: `3cddb2fdc4d399b86ad2d264a4d92fc8a65c23dc`
+- AgentAbstain commit: `f581249704b26804e28a39e37396f1be00b71a4d`
+- Dataset revision: `842228426c2a703347396501af61c7890972c7ee`
+- Model: `deepseek-v4-pro`
+- Condition: `guard`
+- Task / side: `conflicting_evidence/preview_008` / `abstain`
+- Tool-call sequence: none; the model request failed before the first MCP call
+- `observations_seen`: `0`
+- `claims_created`: `0`
+- `conflicts_detected`: `0`
+- `commit_attempted`: `false`
+- `guard_decision`: `null`
+- `commit_dispatched`: `false`
+- Final response: none
+- Run error: `Connection error`; runtime export was unavailable because the
+  Agent session did not start
+- Failure category: `PROVIDER_FAILURE`
+- Result: **FAIL / inconclusive integration smoke**
+
+The deterministic infrastructure checks remained green, and the generated
+artifact contains no API credential. Because the model never selected a tool,
+this run does not evaluate AgentAbstain evidence collection or ContextCanon
+conflict detection. No retry or additional paid rollout was performed.
