@@ -18,6 +18,17 @@ SIDES = ("act", "abstain")
 CONDITIONS = ("baseline", "governed", "guard")
 
 
+def _format_exception(stage: str, exc: BaseException) -> str:
+    """Keep provider/runtime diagnostics useful without serializing secrets."""
+
+    parts = [f"{stage}: {type(exc).__name__}: {exc}"]
+    if exc.__cause__ is not None:
+        parts.append(f"cause={type(exc.__cause__).__name__}: {exc.__cause__}")
+    if exc.__context__ is not None and exc.__context__ is not exc.__cause__:
+        parts.append(f"context={type(exc.__context__).__name__}: {exc.__context__}")
+    return " | ".join(parts)
+
+
 def _upstream(repo: Path):
     repo = Path(repo)
     repo = repo.expanduser().resolve()
@@ -27,6 +38,7 @@ def _upstream(repo: Path):
         sys.path.insert(0, str(repo))
     from agent.openaisdk.agent import OpenAISDKAgent
     from agents import Agent, ModelSettings, Runner
+    from agents import set_tracing_disabled
     from agents.models.openai_provider import OpenAIProvider
     from agents.mcp.server import MCPServerStdio
     from src.runtime.common import (
@@ -37,6 +49,7 @@ def _upstream(repo: Path):
         normalize_runtime_export_payload,
     )
     from src.types.BaseAgent import BaseAgent
+    set_tracing_disabled(True)
     return (OpenAISDKAgent, Agent, ModelSettings, Runner, MCPServerStdio, OpenAIProvider,
             RUNTIME_EXPORT_TOOL_NAME, build_runtime_server_args,
             build_task_run_result, coerce_final_output,
@@ -78,7 +91,8 @@ async def run_one(args: argparse.Namespace, task: str, side: str) -> dict[str, A
     )
     final_output = None
     export_payload = None
-    run_error = None
+    model_error = None
+    runtime_export_error = None
     usage = None
     try:
         await server.connect()
@@ -102,13 +116,13 @@ async def run_one(args: argparse.Namespace, task: str, side: str) -> dict[str, A
             final_output = coerce_output(result.final_output)
             usage = _extract_usage(result)
         except Exception as exc:
-            run_error = str(exc)
+            model_error = _format_exception("model_request", exc)
         try:
             exported = await server.call_tool(export_name, {})
             payload = getattr(exported, "structuredContent", None)
             export_payload = normalize_export(payload)
         except Exception as exc:
-            run_error = f"{run_error}; runtime export failed: {exc}" if run_error else str(exc)
+            runtime_export_error = _format_exception("runtime_export", exc)
     finally:
         try:
             await server.cleanup()
@@ -124,13 +138,14 @@ async def run_one(args: argparse.Namespace, task: str, side: str) -> dict[str, A
         "contextcanon": True,
         "commit_attempted": server.contextcanon_bridge.diagnostics.commit_attempted,
         "commit_dispatched": server.contextcanon_bridge.diagnostics.commit_dispatched,
+        "tracing": "disabled",
     }
     if usage is not None:
         metadata["usage"] = usage
     result = build_result(
         agent=agent, bundle=bundle, artifact_dir=artifact_dir,
         final_output=final_output, export_payload=export_payload,
-        run_error=run_error, provider_metadata=metadata,
+        run_error=model_error or runtime_export_error,
     )
     return {
         "task_id": f"conflicting_evidence/{task}",
@@ -138,6 +153,13 @@ async def run_one(args: argparse.Namespace, task: str, side: str) -> dict[str, A
         "condition": args.condition,
         "artifact_dir": result.artifact_dir,
         "error": result.error,
+        "model_error": model_error,
+        "runtime_export_error": runtime_export_error,
+        "final_output": final_output,
+        "executed_tools": [
+            entry.get("tool") for entry in (export_payload or {}).get("execution_log", [])
+            if isinstance(entry, dict) and isinstance(entry.get("tool"), str)
+        ],
         "diagnostics": server.contextcanon_bridge.diagnostics.to_dict(),
     }
 
@@ -159,6 +181,7 @@ async def _run(args: argparse.Namespace) -> int:
     if not os.environ.get("DEEPSEEK_API_KEY") and not os.environ.get("OPENAI_API_KEY"):
         raise SystemExit("Set DEEPSEEK_API_KEY before --run (no key is persisted).")
     os.environ.setdefault("OPENAI_BASE_URL", "https://api.deepseek.com")
+    os.environ.setdefault("OPENAI_AGENTS_DISABLE_TRACING", "1")
     if "OPENAI_API_KEY" not in os.environ:
         os.environ["OPENAI_API_KEY"] = os.environ["DEEPSEEK_API_KEY"]
     tasks = TASKS if args.task == "all" else (args.task,)

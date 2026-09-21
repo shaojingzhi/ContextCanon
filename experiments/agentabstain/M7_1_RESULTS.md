@@ -97,3 +97,18 @@ read both sources, observed March 22 versus March 23, ContextCanon recorded
 to send the SMS. The full artifact-producing runner continued to return a
 provider `Connection error` before its first MCP call, so Gate 4 remains
 inconclusive rather than being marked successful.
+
+## Gate 4 full-runner diagnosis
+
+The committed `smoke_agent.py` reproduces the successful minimal path without
+artifact persistence. The full runner now shares its provider, Chat
+Completions mode, DeepSeek thinking settings, disabled tracing, MCP subprocess
+environment, and structured error fields with that path.
+
+The latest minimal smoke attempt failed before MCP with the underlying
+`httpx2.ConnectError: [Errno 8] nodename nor servname provided`, wrapped by the
+OpenAI SDK as `APIConnectionError: Connection error`. This is a DNS/network
+failure in the Agents SDK HTTP transport, not a ContextCanon observation or
+extraction failure. Direct DeepSeek `/models` and Chat Completions checks remain
+successful, but the stop condition prohibits another paid retry while the
+minimal path is unavailable.

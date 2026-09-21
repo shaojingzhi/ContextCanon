@@ -4,6 +4,7 @@ import unittest
 
 from experiments.agentabstain.openai_runtime import canonical_tool_name, official_server_env
 from experiments.agentabstain.official_gate import validate_gate_result
+from experiments.agentabstain.run_agent import _format_exception
 
 
 class OpenAIRuntimeTests(unittest.TestCase):
@@ -81,6 +82,11 @@ class OpenAIRuntimeTests(unittest.TestCase):
             "abstain", executed_tools=[], commit_attempted=False
         ))
         self.assertIn("commit_attempted must be true", "\n".join(failures))
+
+    def test_runner_exception_format_keeps_stage_without_secret_headers(self) -> None:
+        text = _format_exception("model_request", RuntimeError("Connection error"))
+        self.assertIn("model_request: RuntimeError: Connection error", text)
+        self.assertNotIn("Authorization", text)
 
 
 if __name__ == "__main__":
