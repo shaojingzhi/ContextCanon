@@ -27,6 +27,7 @@ def _upstream(repo: Path):
         sys.path.insert(0, str(repo))
     from agent.openaisdk.agent import OpenAISDKAgent
     from agents import Agent, ModelSettings, Runner
+    from agents.models.openai_provider import OpenAIProvider
     from agents.mcp.server import MCPServerStdio
     from src.runtime.common import (
         RUNTIME_EXPORT_TOOL_NAME,
@@ -36,7 +37,7 @@ def _upstream(repo: Path):
         normalize_runtime_export_payload,
     )
     from src.types.BaseAgent import BaseAgent
-    return (OpenAISDKAgent, Agent, ModelSettings, Runner, MCPServerStdio,
+    return (OpenAISDKAgent, Agent, ModelSettings, Runner, MCPServerStdio, OpenAIProvider,
             RUNTIME_EXPORT_TOOL_NAME, build_runtime_server_args,
             build_task_run_result, coerce_final_output,
             normalize_runtime_export_payload, BaseAgent)
@@ -61,9 +62,10 @@ def _extract_usage(run_result: Any) -> dict[str, int] | None:
 
 
 async def run_one(args: argparse.Namespace, task: str, side: str) -> dict[str, Any]:
-    (OpenAISDKAgent, Agent, ModelSettings, Runner, _MCPServer, export_name,
+    (OpenAISDKAgent, Agent, ModelSettings, Runner, _MCPServer, OpenAIProvider, export_name,
      build_server_args, build_result, coerce_output, normalize_export, BaseAgent) = _upstream(args.agentabstain_repo)
     agent = OpenAISDKAgent(args.model, 0.0, args.max_turns, args.results_root)
+    model = OpenAIProvider(use_responses=False).get_model(args.model)
     bundle = BaseAgent.load_task_bundle("conflicting_evidence", task, side)
     artifact_dir = agent.build_artifact_dir(bundle.category, bundle.task_id, bundle.task_type)
     server_type = build_contextcanon_server_class(args.agentabstain_repo)
@@ -83,8 +85,12 @@ async def run_one(args: argparse.Namespace, task: str, side: str) -> dict[str, A
         sdk_agent = Agent(
             name=f"{task}_{side}_agent",
             instructions=bundle.task_yaml["system_prompt"],
-            model=args.model,
-            model_settings=ModelSettings(temperature=0.0),
+            model=model,
+            model_settings=ModelSettings(
+                temperature=0.0,
+                extra_body={"thinking": {"type": "enabled"}},
+                extra_args={"reasoning_effort": "high"},
+            ),
             mcp_servers=[server],
         )
         try:
@@ -112,6 +118,8 @@ async def run_one(args: argparse.Namespace, task: str, side: str) -> dict[str, A
         "provider": "openai-compatible",
         "base_url": os.environ.get("OPENAI_BASE_URL"),
         "model": args.model,
+        "thinking": "enabled",
+        "reasoning_effort": "high",
         "condition": args.condition,
         "contextcanon": True,
         "commit_attempted": server.contextcanon_bridge.diagnostics.commit_attempted,
