@@ -43,6 +43,47 @@ def _result_payload(result: Any) -> Any:
     return _json_safe(structured)
 
 
+def _result_is_error(result: Any) -> bool:
+    if isinstance(result, dict):
+        return bool(result.get("isError", result.get("is_error", False)))
+    return bool(
+        getattr(result, "is_error", getattr(result, "isError", False))
+    )
+
+
+def _inject_governed_evidence(result: Any, evidence: str) -> Any:
+    block = f"[ContextCanon runtime evidence]\n\n{evidence}"
+    if isinstance(result, dict):
+        enriched = dict(result)
+        structured = enriched.get("structuredContent", enriched.get("structured_content"))
+        if structured is None and isinstance(enriched.get("result"), dict):
+            nested = dict(enriched["result"])
+            nested["contextcanon_runtime_evidence"] = block
+            enriched["result"] = nested
+            return enriched
+        if isinstance(structured, dict):
+            structured = dict(structured)
+            structured["contextcanon_runtime_evidence"] = block
+            if "structuredContent" in enriched:
+                enriched["structuredContent"] = structured
+            else:
+                enriched["structured_content"] = structured
+        else:
+            enriched["contextcanon_runtime_evidence"] = block
+        return enriched
+
+    if hasattr(result, "model_copy"):
+        try:
+            from mcp.types import TextContent
+
+            content = list(getattr(result, "content", []) or [])
+            content.append(TextContent(type="text", text=block))
+            return result.model_copy(update={"content": content})
+        except Exception:
+            return result
+    return result
+
+
 @dataclass(slots=True)
 class BridgeDiagnostics:
     observations_seen: int = 0
@@ -126,14 +167,21 @@ class RuntimeMCPBridge:
                 )
             raise
 
+        result_is_error = _result_is_error(result)
         if kind in {"lookup", "verify"} and self.condition != "baseline":
             self._record_observation(
                 tool_name,
                 kind,
                 arguments,
                 _result_payload(result),
-                success=True,
+                success=not result_is_error,
+                error="MCP tool returned isError=true" if result_is_error else None,
             )
+            if not result_is_error and self.condition in {"governed", "guard"}:
+                result = _inject_governed_evidence(
+                    result,
+                    self.adapter.render_governed_evidence(),
+                )
         if kind == "commit":
             self.diagnostics.commit_dispatched = True
         return result
@@ -167,4 +215,3 @@ class RuntimeMCPBridge:
 
     def governed_evidence(self) -> str:
         return self.adapter.render_governed_evidence()
-

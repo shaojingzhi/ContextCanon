@@ -1,5 +1,32 @@
 # AgentAbstain adapter spike
 
+## Milestone boundaries
+
+M6 uses synthetic observations. M7 replays the real AgentAbstain environment
+with deterministic tool calls. M7.1 adds an opt-in model loop through the
+official `src.runtime.task_mcp_server` startup path; it does not change the
+upstream checkout or benchmark evaluator.
+
+The live runner is deliberately not automatic:
+
+```bash
+python -m experiments.agentabstain.run_agent --task preview_008 --side abstain
+python -m experiments.agentabstain.official_gate
+DEEPSEEK_API_KEY=... python -m experiments.agentabstain.run_agent \
+  --task preview_008 --side abstain --condition guard --run
+```
+
+Use `--task all --side all --condition guard --run` only when explicitly
+authorizing all six paid model rollouts. The runner uses the OpenAI-compatible
+DeepSeek endpoint (`OPENAI_BASE_URL=https://api.deepseek.com`) and maps
+`DEEPSEEK_API_KEY` to the SDK's `OPENAI_API_KEY` in memory only. API keys are
+never written to result metadata.
+
+The tool-kind map in `openai_runtime.py` is intentionally limited to this
+spike because the upstream MCP schema does not expose the benchmark's internal
+lookup/verify/commit labels. It is not a registry or a generic extraction
+framework.
+
 This spike proves a narrow runtime boundary for three public AgentAbstain S7
 task shapes:
 
@@ -88,4 +115,3 @@ dependency is required.
 This M7 integration still uses task-specific semantic extraction for these
 three AgentAbstain pairs. It does not solve generic semantic extraction, and
 it does not establish benchmark performance improvement.
-

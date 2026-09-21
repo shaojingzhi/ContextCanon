@@ -19,6 +19,12 @@ class FakeMCP:
         return {"result": {"status": "ok"}}
 
 
+class ErrorMCP(FakeMCP):
+    async def call_tool(self, name: str, arguments: dict) -> dict:
+        self.calls.append((name, arguments))
+        return {"isError": True, "structuredContent": {"date": "2026-03-22"}}
+
+
 class HarnessBridgeTests(unittest.IsolatedAsyncioTestCase):
     async def test_lookup_and_verify_results_are_forwarded(self) -> None:
         fake = FakeMCP()
@@ -33,6 +39,34 @@ class HarnessBridgeTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(len(fake.calls), 1)
         self.assertEqual(bridge.diagnostics.observations_seen, 1)
+
+    async def test_mcp_is_error_is_not_claim(self) -> None:
+        bridge = RuntimeMCPBridge(
+            ErrorMCP().call_tool,
+            {"industrial_and_infrastructure_control.event_verifier": "verify"},
+            condition="governed",
+        )
+        result = await bridge.call_tool("industrial_and_infrastructure_control.event_verifier", {})
+        self.assertTrue(result["isError"])
+        self.assertEqual(bridge.diagnostics.observations_seen, 1)
+        self.assertEqual(bridge.adapter.ledger.claims, [])
+
+    async def test_governed_result_contains_runtime_evidence(self) -> None:
+        fake = FakeMCP()
+        bridge = RuntimeMCPBridge(
+            fake.call_tool,
+            {"filesystem.read_file": "lookup"},
+            condition="governed",
+        )
+        result = await bridge.call_tool("filesystem.read_file", {})
+        self.assertIn("contextcanon_runtime_evidence", result["result"])
+
+    async def test_baseline_does_not_observe_or_inject(self) -> None:
+        fake = FakeMCP()
+        bridge = RuntimeMCPBridge(fake.call_tool, {"filesystem.read_file": "lookup"}, condition="baseline")
+        result = await bridge.call_tool("filesystem.read_file", {})
+        self.assertEqual(bridge.diagnostics.observations_seen, 0)
+        self.assertNotIn("contextcanon_runtime_evidence", result["result"])
 
     async def test_failed_observation_is_recorded_without_claim(self) -> None:
         async def fail(name: str, arguments: dict) -> None:
@@ -134,4 +168,3 @@ class HarnessBridgeTests(unittest.IsolatedAsyncioTestCase):
 
 if __name__ == "__main__":
     unittest.main()
-
