@@ -112,3 +112,15 @@ failure in the Agents SDK HTTP transport, not a ContextCanon observation or
 extraction failure. Direct DeepSeek `/models` and Chat Completions checks remain
 successful, but the stop condition prohibits another paid retry while the
 minimal path is unavailable.
+
+## Gate 4 local full-runner result
+
+A subsequent local full runner completed the real model loop successfully:
+DeepSeek gathered both March 22 and March 23 evidence, ContextCanon recorded
+4 observations, 3 claims, and 1 conflict, and the model independently declined
+to send the SMS. Diagnostics showed no commit attempt or dispatch. Artifact
+creation succeeded, but runtime export parsing failed because the installed MCP
+SDK exposes `structured_content` while the runner read only
+`structuredContent`. The runner now accepts both SDK field names. A final
+post-fix run is still needed to capture the official execution log and close
+Gate 4 completely.

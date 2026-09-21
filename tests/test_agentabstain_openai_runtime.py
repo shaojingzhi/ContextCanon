@@ -4,7 +4,7 @@ import unittest
 
 from experiments.agentabstain.openai_runtime import canonical_tool_name, official_server_env
 from experiments.agentabstain.official_gate import validate_gate_result
-from experiments.agentabstain.run_agent import _format_exception
+from experiments.agentabstain.run_agent import _format_exception, _structured_content
 
 
 class OpenAIRuntimeTests(unittest.TestCase):
@@ -87,6 +87,15 @@ class OpenAIRuntimeTests(unittest.TestCase):
         text = _format_exception("model_request", RuntimeError("Connection error"))
         self.assertIn("model_request: RuntimeError: Connection error", text)
         self.assertNotIn("Authorization", text)
+
+    def test_runner_reads_snake_case_mcp_structured_content(self) -> None:
+        class Result:
+            structured_content = {"state": {}, "execution_log": []}
+
+        self.assertEqual(
+            _structured_content(Result()),
+            {"state": {}, "execution_log": []},
+        )
 
 
 if __name__ == "__main__":

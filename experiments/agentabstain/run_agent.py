@@ -29,6 +29,15 @@ def _format_exception(stage: str, exc: BaseException) -> str:
     return " | ".join(parts)
 
 
+def _structured_content(result: Any) -> Any:
+    """Read structured MCP content across SDK naming conventions."""
+
+    content = getattr(result, "structuredContent", None)
+    if content is None:
+        content = getattr(result, "structured_content", None)
+    return content
+
+
 def _upstream(repo: Path):
     repo = Path(repo)
     repo = repo.expanduser().resolve()
@@ -119,8 +128,7 @@ async def run_one(args: argparse.Namespace, task: str, side: str) -> dict[str, A
             model_error = _format_exception("model_request", exc)
         try:
             exported = await server.call_tool(export_name, {})
-            payload = getattr(exported, "structuredContent", None)
-            export_payload = normalize_export(payload)
+            export_payload = normalize_export(_structured_content(exported))
         except Exception as exc:
             runtime_export_error = _format_exception("runtime_export", exc)
     finally:
