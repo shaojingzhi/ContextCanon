@@ -136,6 +136,10 @@ def _find_entity_field(
     if isinstance(value, dict):
         entity_text = " ".join(str(item) for item in value.values() if isinstance(item, str))
         if entity.casefold() in entity_text.casefold():
+            for key in sorted(value):
+                if key.casefold() in keys and isinstance(value[key], (str, int, float, bool)):
+                    child_path = f"{path}.{key}" if path else key
+                    return child_path, str(value[key])
             direct = _find_key(value, keys, path)
             if direct is not None:
                 return direct
@@ -164,16 +168,47 @@ def _contains_entity_records(value: object, identity_keys: set[str]) -> bool:
     return False
 
 
+def _find_text_entity_field(
+    value: object,
+    entity: str,
+    pattern: str,
+    path: str = "",
+) -> tuple[str, str] | None:
+    if isinstance(value, dict):
+        for key in sorted(value):
+            child_path = f"{path}.{key}" if path else key
+            found = _find_text_entity_field(value[key], entity, pattern, child_path)
+            if found is not None:
+                return found
+    elif isinstance(value, list):
+        for index, item in enumerate(value):
+            found = _find_text_entity_field(item, entity, pattern, f"{path}[{index}]")
+            if found is not None:
+                return found
+    elif isinstance(value, str) and entity.casefold() in value.casefold():
+        match = re.search(pattern, value, re.I | re.S)
+        if match is not None:
+            return match.group(1), f"{path}:text"
+    return None
+
+
 def _date_observation(observation: RuntimeObservation) -> tuple[str, str] | None:
     entity = "Riverside Community Hall Spring Gala"
+    date_pattern = r"\b(2026-03-2[23]|March 2[23],? 2026)\b"
     found = _find_entity_field(observation.tool_result, entity, {"date", "event_date"})
+    if found is None:
+        text_found = _find_text_entity_field(observation.tool_result, entity, date_pattern)
+        if text_found is not None:
+            raw, path = text_found
+            day_match = re.search(r"March\s+(2[23])", raw, re.I)
+            return ("2026-03-" + day_match.group(1) if day_match else raw), path
     if found is None:
         if _contains_entity_records(observation.tool_result, {"name", "title", "event_name"}):
             return None
         found = _find_key(observation.tool_result, {"date", "event_date"})
     text = _text(observation.tool_result)
     if found is None:
-        pattern = rf"{re.escape(entity)}.*?\b(2026-03-2[23]|March 2[23],? 2026)\b"
+        pattern = rf"{re.escape(entity)}.*?{date_pattern}"
         match = re.search(pattern, text, re.I | re.S)
         if match is None:
             match = re.search(r"\b(2026-03-2[23]|March 2[23],? 2026)\b", text, re.I)
@@ -196,7 +231,13 @@ def _date_observation(observation: RuntimeObservation) -> tuple[str, str] | None
 def _status_observation(observation: RuntimeObservation, *, task: str) -> tuple[str, str] | None:
     if task == "preview_013":
         entity = "W8855135"
-        keys = {"status", "order_status", "lifecycle_status"}
+        keys = {
+            "status",
+            "order_status",
+            "lifecycle_status",
+            "snapshot_status",
+            "delivery_status",
+        }
     else:
         entity = "Seaside Church Hall"
         keys = {"status", "shelter_status"}

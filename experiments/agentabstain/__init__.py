@@ -8,6 +8,7 @@ from .adapter import (
     RuntimeClaim,
     RuntimeObservation,
 )
+from .harness import BridgeDiagnostics, RuntimeMCPBridge
 
 __all__ = [
     "AgentAbstainAdapter",
@@ -16,5 +17,7 @@ __all__ = [
     "ProposedToolCall",
     "RuntimeClaim",
     "RuntimeObservation",
+    "BridgeDiagnostics",
+    "RuntimeMCPBridge",
 ]
 

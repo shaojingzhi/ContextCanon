@@ -3,6 +3,7 @@ __pycache__/
 *.egg-info/
 .pytest_cache/
 .coverage
+experiments/agentabstain/results/
 build/
 dist/
 .venv/

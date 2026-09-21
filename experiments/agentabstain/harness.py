@@ -1,0 +1,170 @@
+"""Small runtime bridge for real AgentAbstain MCP call boundaries.
+
+The bridge receives only runtime tool names, kinds, arguments, results, and
+errors. It deliberately does not know task labels or evaluator metadata.
+"""
+
+from __future__ import annotations
+
+import json
+from dataclasses import dataclass
+from typing import Any, Awaitable, Callable, Mapping
+
+from .adapter import (
+    AgentAbstainAdapter,
+    GuardDecision,
+    ProposedToolCall,
+    RuntimeObservation,
+)
+
+
+def _json_safe(value: Any) -> Any:
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    if isinstance(value, dict):
+        return {str(key): _json_safe(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_json_safe(item) for item in value]
+    if hasattr(value, "model_dump"):
+        return _json_safe(value.model_dump())
+    if hasattr(value, "to_dict"):
+        return _json_safe(value.to_dict())
+    return str(value)
+
+
+def _result_payload(result: Any) -> Any:
+    structured = getattr(result, "structured_content", None)
+    if structured is None:
+        structured = getattr(result, "structuredContent", None)
+    if structured is None:
+        structured = result
+    if isinstance(structured, dict) and set(structured) == {"result"}:
+        structured = structured["result"]
+    return _json_safe(structured)
+
+
+@dataclass(slots=True)
+class BridgeDiagnostics:
+    observations_seen: int = 0
+    claims_created: int = 0
+    conflicts_detected: int = 0
+    commit_attempted: bool = False
+    guard_decision: str | None = None
+    commit_dispatched: bool = False
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "observations_seen": self.observations_seen,
+            "claims_created": self.claims_created,
+            "conflicts_detected": self.conflicts_detected,
+            "commit_attempted": self.commit_attempted,
+            "guard_decision": self.guard_decision,
+            "commit_dispatched": self.commit_dispatched,
+        }
+
+
+class RuntimeMCPBridge:
+    """Observe lookup/verify calls and gate commit calls before dispatch."""
+
+    def __init__(
+        self,
+        call_tool: Callable[..., Awaitable[Any]],
+        tool_kinds: Mapping[str, str],
+        *,
+        condition: str,
+        adapter: AgentAbstainAdapter | None = None,
+    ) -> None:
+        if condition not in {"baseline", "governed", "guard"}:
+            raise ValueError("condition must be baseline, governed, or guard")
+        self._call_tool = call_tool
+        self._tool_kinds = dict(tool_kinds)
+        self.condition = condition
+        self.adapter = adapter or AgentAbstainAdapter()
+        self.call_index = 0
+        self.diagnostics = BridgeDiagnostics()
+
+    async def call_tool(
+        self,
+        tool_name: str,
+        arguments: dict[str, Any] | None = None,
+        *,
+        meta: dict[str, Any] | None = None,
+    ) -> Any:
+        arguments = arguments or {}
+        kind = self._tool_kinds.get(tool_name, "")
+        if kind == "commit":
+            self.diagnostics.commit_attempted = True
+            decision = self.adapter.evaluate_proposed_commit(
+                ProposedToolCall(tool_name, kind, arguments)
+            )
+            self.diagnostics.guard_decision = decision.value
+            if self.condition == "guard" and decision is GuardDecision.REQUIRE_CLARIFICATION:
+                return {
+                    "isError": True,
+                    "structuredContent": {
+                        "message": (
+                            "The proposed action depends on conflicting runtime evidence. "
+                            "Clarification is required before this action can be executed."
+                        )
+                    },
+                }
+
+        try:
+            if meta is None:
+                result = await self._call_tool(tool_name, arguments)
+            else:
+                result = await self._call_tool(tool_name, arguments, meta=meta)
+        except Exception as exc:
+            if kind in {"lookup", "verify"} and self.condition != "baseline":
+                self._record_observation(
+                    tool_name,
+                    kind,
+                    arguments,
+                    None,
+                    success=False,
+                    error=str(exc),
+                )
+            raise
+
+        if kind in {"lookup", "verify"} and self.condition != "baseline":
+            self._record_observation(
+                tool_name,
+                kind,
+                arguments,
+                _result_payload(result),
+                success=True,
+            )
+        if kind == "commit":
+            self.diagnostics.commit_dispatched = True
+        return result
+
+    def _record_observation(
+        self,
+        tool_name: str,
+        tool_kind: str,
+        arguments: dict[str, Any],
+        result: Any,
+        *,
+        success: bool,
+        error: str | None = None,
+    ) -> None:
+        self.diagnostics.observations_seen += 1
+        claim = self.adapter.observe_tool_result(
+            RuntimeObservation(
+                tool_name=tool_name,
+                tool_kind=tool_kind,
+                tool_parameters=arguments,
+                tool_result=result,
+                success=success,
+                call_index=self.call_index,
+                error=error,
+            )
+        )
+        if claim is not None:
+            self.diagnostics.claims_created += 1
+        self.diagnostics.conflicts_detected = len(self.adapter.ledger.conflicts())
+        self.call_index += 1
+
+    def governed_evidence(self) -> str:
+        return self.adapter.render_governed_evidence()
+
