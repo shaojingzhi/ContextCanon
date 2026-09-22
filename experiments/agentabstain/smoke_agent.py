@@ -58,7 +58,7 @@ async def run_smoke(repo: Path, data: Path, model_name: str, max_turns: int) -> 
             input=bundle.task_yaml["instruction"],
             max_turns=max_turns,
         )
-        payload = await server.call_tool(RUNTIME_EXPORT_TOOL_NAME, {})
+        payload = await server.call_runtime_control_tool(RUNTIME_EXPORT_TOOL_NAME, {})
         exported = getattr(payload, "structuredContent", None)
         if exported is None:
             exported = getattr(payload, "structured_content", None)

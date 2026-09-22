@@ -2,7 +2,12 @@ from __future__ import annotations
 
 import unittest
 
-from experiments.agentabstain.openai_runtime import canonical_tool_name, official_server_env
+from contextcanon.tool_semantics import ToolSemantics
+from experiments.agentabstain.openai_runtime import (
+    AgentAbstainStaticToolSemanticsResolver,
+    canonical_tool_name,
+    official_server_env,
+)
 from experiments.agentabstain.official_gate import validate_gate_result
 from experiments.agentabstain.run_agent import (
     _build_persisted_result,
@@ -33,6 +38,21 @@ class OpenAIRuntimeTests(unittest.TestCase):
         self.assertEqual(
             canonical_tool_name("industrial_and_infrastructure_control__event_search", mapping),
             "industrial_and_infrastructure_control.event_search",
+        )
+
+    def test_agentabstain_static_tool_semantics_are_compatibility_only(self) -> None:
+        resolver = AgentAbstainStaticToolSemanticsResolver()
+        self.assertEqual(
+            resolver.classify("filesystem.read_file"),
+            ToolSemantics.READ,
+        )
+        self.assertEqual(
+            resolver.classify("phone_and_messages.send_phone_message"),
+            ToolSemantics.SIDE_EFFECT,
+        )
+        self.assertEqual(
+            resolver.classify("production.deploy_config"),
+            ToolSemantics.UNKNOWN,
         )
 
     def test_official_server_env_is_small_and_deterministic(self) -> None:

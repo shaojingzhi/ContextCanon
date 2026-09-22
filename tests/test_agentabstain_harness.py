@@ -5,11 +5,14 @@ import unittest
 from contextcanon.core import EvidenceRelation, FactAlignment, TemporalScope
 from contextcanon.governance import (
     AlignmentResult,
+    DependencyAssessment,
     FactNeed,
+    FactNeedExtractionResult,
     GovernanceState,
     GovernanceStore,
 )
 from contextcanon.semantic import ClaimCandidate, Provenance
+from contextcanon.tool_semantics import StaticToolSemanticsResolver, ToolSemantics
 from experiments.agentabstain.adapter import (
     AgentAbstainAdapter,
     GuardDecision,
@@ -41,10 +44,8 @@ class HarnessBridgeTests(unittest.IsolatedAsyncioTestCase):
                 return []
 
         class FailedNeedExtractor:
-            last_failed = True
-
             def extract_for_action(self, action):
-                return []
+                return FactNeedExtractionResult(DependencyAssessment.UNKNOWN)
 
         fake = FakeMCP()
         governance = RuntimeGovernance(
@@ -96,12 +97,15 @@ class HarnessBridgeTests(unittest.IsolatedAsyncioTestCase):
 
         class NeedExtractor:
             def extract_for_action(self, action):
-                return [FactNeed(
-                    "Community workshop",
-                    "scheduled date",
-                    "date",
-                    TemporalScope.CURRENT,
-                )]
+                return FactNeedExtractionResult(
+                    DependencyAssessment.HAS_DEPENDENCIES,
+                    (FactNeed(
+                        "Community workshop",
+                        "scheduled date",
+                        "date",
+                        TemporalScope.CURRENT,
+                    ),),
+                )
 
         responses = iter((
             {"result": {"date": "2026-04-10"}},
@@ -143,6 +147,204 @@ class HarnessBridgeTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("State: DIVERGED", rendered)
         self.assertIn("2026-04-10", rendered)
         self.assertIn("source.a", rendered)
+
+    async def test_empty_has_dependencies_fails_closed(self) -> None:
+        class EmptyExtractor:
+            def extract(self, observation, context=None):
+                return []
+
+        class EmptyNeedExtractor:
+            def extract_for_action(self, action):
+                return FactNeedExtractionResult(
+                    DependencyAssessment.HAS_DEPENDENCIES
+                )
+
+        fake = FakeMCP()
+        governance = RuntimeGovernance(
+            extractor=EmptyExtractor(),
+            fact_need_extractor=EmptyNeedExtractor(),
+            store=GovernanceStore(),
+        )
+        resolver = StaticToolSemanticsResolver({
+            "messages.send": ToolSemantics.SIDE_EFFECT,
+        })
+        bridge = RuntimeMCPBridge(
+            fake.call_tool,
+            resolver,
+            condition="guard",
+            governance=governance,
+        )
+        await bridge.call_tool("messages.send", {"text": "External fact"})
+        self.assertEqual(fake.calls, [])
+        self.assertEqual(
+            bridge.diagnostics.guard_decision,
+            GuardDecision.REQUIRE_CLARIFICATION.value,
+        )
+
+    async def test_no_dependencies_can_allow_side_effect(self) -> None:
+        class EmptyExtractor:
+            def extract(self, observation, context=None):
+                return []
+
+        class NoNeedExtractor:
+            def extract_for_action(self, action):
+                return FactNeedExtractionResult(
+                    DependencyAssessment.NO_DEPENDENCIES
+                )
+
+        fake = FakeMCP()
+        governance = RuntimeGovernance(
+            extractor=EmptyExtractor(),
+            fact_need_extractor=NoNeedExtractor(),
+            store=GovernanceStore(),
+        )
+        resolver = StaticToolSemanticsResolver({
+            "healthcheck.ping": ToolSemantics.SIDE_EFFECT,
+        })
+        bridge = RuntimeMCPBridge(
+            fake.call_tool,
+            resolver,
+            condition="guard",
+            governance=governance,
+        )
+        await bridge.call_tool("healthcheck.ping", {})
+        self.assertEqual(fake.calls, [("healthcheck.ping", {})])
+
+    async def test_unknown_tool_semantics_fail_closed_in_guard_mode(self) -> None:
+        fake = FakeMCP()
+        bridge = RuntimeMCPBridge(
+            fake.call_tool,
+            StaticToolSemanticsResolver({}),
+            condition="guard",
+        )
+        result = await bridge.call_tool("production.unknown", {})
+        self.assertEqual(fake.calls, [])
+        self.assertIn("Clarification is required", result["structuredContent"]["message"])
+
+    async def test_tool_runtime_metadata_reaches_semantics_resolver(self) -> None:
+        class CapturingResolver:
+            def __init__(self):
+                self.received = None
+
+            def classify(
+                self,
+                tool_name,
+                *,
+                description=None,
+                input_schema=None,
+                annotations=None,
+            ):
+                self.received = (
+                    tool_name,
+                    description,
+                    input_schema,
+                    annotations,
+                )
+                return ToolSemantics.READ
+
+        resolver = CapturingResolver()
+        fake = FakeMCP()
+        bridge = RuntimeMCPBridge(
+            fake.call_tool,
+            resolver,
+            condition="governed",
+        )
+        await bridge.call_tool(
+            "records.lookup",
+            {},
+            tool_description="Read one record.",
+            input_schema={"type": "object"},
+            annotations={"readOnlyHint": True},
+        )
+        self.assertEqual(
+            resolver.received,
+            (
+                "records.lookup",
+                "Read one record.",
+                {"type": "object"},
+                {"readOnlyHint": True},
+            ),
+        )
+
+    async def test_generic_tool_semantics_route_evidence_and_action(self) -> None:
+        class Extractor:
+            def extract(self, observation, context=None):
+                subjects = ("deployment service", "release operations")
+                return [ClaimCandidate(
+                    entity=subjects[observation.call_index],
+                    property="deployment window",
+                    value=observation.tool_result["window"],
+                    value_type="string",
+                    role="OBSERVED",
+                    confidence=0.95,
+                    provenance=Provenance(
+                        f"observation-{observation.call_index}",
+                        observation.tool_name,
+                        observation.tool_parameters,
+                        "window",
+                        observation.tool_result["window"],
+                    ),
+                    temporal_scope=TemporalScope.CURRENT.value,
+                )]
+
+        class Aligner:
+            def align(self, incoming, existing_fact):
+                return AlignmentResult(FactAlignment.SAME_FACT, 0.95)
+
+        class Classifier:
+            def classify(self, incoming, existing):
+                return EvidenceRelation.CONFLICTING
+
+        class NeedExtractor:
+            def extract_for_action(self, action):
+                return FactNeedExtractionResult(
+                    DependencyAssessment.HAS_DEPENDENCIES,
+                    (FactNeed(
+                        "deployment service",
+                        "deployment window",
+                        "time",
+                        TemporalScope.CURRENT,
+                    ),),
+                )
+
+        responses = iter((
+            {"result": {"window": "22:00"}},
+            {"result": {"window": "23:00"}},
+        ))
+        dispatched: list[str] = []
+
+        async def call_tool(name: str, arguments: dict) -> dict:
+            dispatched.append(name)
+            if name == "production.deploy_config":
+                self.fail("diverged side effect must not be dispatched")
+            return next(responses)
+
+        resolver = StaticToolSemanticsResolver({
+            "source.one": ToolSemantics.READ,
+            "source.two": ToolSemantics.VERIFY,
+            "production.deploy_config": ToolSemantics.SIDE_EFFECT,
+        })
+        governance = RuntimeGovernance(
+            extractor=Extractor(),
+            fact_need_extractor=NeedExtractor(),
+            store=GovernanceStore(
+                aligner=Aligner(),
+                relation_classifier=Classifier(),
+            ),
+        )
+        bridge = RuntimeMCPBridge(
+            call_tool,
+            resolver,
+            condition="guard",
+            governance=governance,
+        )
+        await bridge.call_tool("source.one", {})
+        await bridge.call_tool("source.two", {})
+        result = await bridge.call_tool("production.deploy_config", {})
+
+        self.assertEqual(dispatched, ["source.one", "source.two"])
+        self.assertEqual(governance.store.facts[0].state, GovernanceState.DIVERGED)
+        self.assertIn("Clarification is required", result["structuredContent"]["message"])
 
     async def test_lookup_and_verify_results_are_forwarded(self) -> None:
         fake = FakeMCP()

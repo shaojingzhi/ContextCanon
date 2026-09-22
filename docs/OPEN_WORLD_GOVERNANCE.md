@@ -35,10 +35,11 @@ selects final truth or authorizes an action.
 The built-in aligner is deliberately conservative and lexical. The live
 generic runtime uses the LLM aligner. Low-confidence or malformed alignment
 becomes `UNKNOWN` and creates a separate fact instead of risking a false merge.
-Before model alignment, the store applies a lexical subject filter and a
-bounded recent-fact limit. Pairwise relation classification is likewise
-bounded to recent active evidence. Large-scale semantic retrieval is future
-work.
+Before model alignment, the store first uses lexical subject candidates. When
+there is no lexical overlap, it falls back to a bounded set of recent governed
+facts so paraphrases can still reach semantic alignment. Pairwise relation
+classification is likewise bounded to recent active evidence. Large-scale
+semantic retrieval is future work.
 
 The deterministic `GovernanceStore` owns state transitions:
 
@@ -72,10 +73,20 @@ governance reads the same state and deterministically requires clarification
 when a required fact is missing, stale, ambiguous, unverified, or diverged.
 
 `FactNeed` describes a fact needed by either a query or an action.
-`LLMFactNeedExtractor` derives these ephemeral needs only from runtime-visible
-tool details and task context; it never emits the final action decision. Dynamic
-dependencies describe what the current consumer needs; they are not a
-permanent global ontology.
+`LLMFactNeedExtractor` returns an explicit `HAS_DEPENDENCIES`,
+`NO_DEPENDENCIES`, or `UNKNOWN` assessment with the ephemeral needs. Empty or
+inconsistent dependency output cannot silently disable protection: uncertain
+or malformed assessments fail closed for side-effect actions. The extractor
+uses only runtime-visible tool details and task context and never emits the
+final action decision. Dynamic dependencies describe what the current consumer
+needs; they are not a permanent global ontology.
+
+`ToolSemanticsResolver` routes tools as `READ`, `VERIFY`, `SIDE_EFFECT`, or
+`UNKNOWN`. Explicit runtime annotations have priority; the generic runtime can
+use the shared semantic client when metadata is insufficient. Unknown tool
+semantics fail closed in guard mode. Tool classification and dependency
+extraction are semantic interpretation steps; final action enforcement remains
+deterministic.
 
 The intended live path is now:
 
@@ -96,7 +107,8 @@ transition**.
 
 The AgentAbstain `LegacyRuleExtractor` remains only for offline deterministic
 tests, backward compatibility, and Gate 1–3 validation. It is not the intended
-generic runtime architecture.
+generic runtime architecture. Its static tool-name mapping is similarly hidden
+behind an AgentAbstain compatibility resolver.
 
 **Probabilistic understanding, deterministic governance.**
 
@@ -106,4 +118,6 @@ M8.2 remains an in-memory architecture slice, not a knowledge graph, temporal
 database, RAG system, or ontology platform. It does not perform generic entity
 linking, automatic ontology evolution, semantic embedding retrieval, or
 automatic entity linking, or large-scale candidate retrieval. It also does not
-run the paid AgentAbstain benchmark.
+run the paid AgentAbstain benchmark. Runtime rendering still includes the full
+task-local store; a future milestone should render only relevant or delta
+governance context.

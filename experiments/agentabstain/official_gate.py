@@ -101,7 +101,7 @@ async def _one(repo: Path, data: Path, task: str, side: str) -> dict:
             encoded = server._encode(name)
             await server.call_tool(encoded, args)
         await server.call_tool(server._encode(commit[0]), commit[1])
-        export = await server.call_tool(RUNTIME_EXPORT_TOOL_NAME, {})
+        export = await server.call_runtime_control_tool(RUNTIME_EXPORT_TOOL_NAME, {})
         payload = getattr(export, "structuredContent", None)
         if payload is None:
             payload = getattr(export, "structured_content", None)

@@ -10,8 +10,13 @@ import json
 from dataclasses import dataclass
 from typing import Any, Awaitable, Callable, Mapping
 
-from contextcanon.semantic import SemanticExtractor
 from contextcanon.governance import ActionGovernanceDecision
+from contextcanon.semantic import SemanticExtractor
+from contextcanon.tool_semantics import (
+    StaticToolSemanticsResolver,
+    ToolSemantics,
+    ToolSemanticsResolver,
+)
 
 from .adapter import (
     AgentAbstainAdapter,
@@ -114,7 +119,7 @@ class RuntimeMCPBridge:
     def __init__(
         self,
         call_tool: Callable[..., Awaitable[Any]],
-        tool_kinds: Mapping[str, str],
+        tool_semantics_resolver: ToolSemanticsResolver | Mapping[str, str],
         *,
         condition: str,
         adapter: AgentAbstainAdapter | None = None,
@@ -124,7 +129,17 @@ class RuntimeMCPBridge:
         if condition not in {"baseline", "governed", "guard"}:
             raise ValueError("condition must be baseline, governed, or guard")
         self._call_tool = call_tool
-        self._tool_kinds = dict(tool_kinds)
+        if isinstance(tool_semantics_resolver, Mapping):
+            legacy_semantics = {
+                name: {
+                    "lookup": ToolSemantics.READ,
+                    "verify": ToolSemantics.VERIFY,
+                    "commit": ToolSemantics.SIDE_EFFECT,
+                }.get(kind, ToolSemantics.UNKNOWN)
+                for name, kind in tool_semantics_resolver.items()
+            }
+            tool_semantics_resolver = StaticToolSemanticsResolver(legacy_semantics)
+        self.tool_semantics_resolver = tool_semantics_resolver
         self.condition = condition
         if governance is not None and (adapter is not None or extractor is not None):
             raise ValueError("governance cannot be combined with legacy adapter/extractor")
@@ -143,10 +158,39 @@ class RuntimeMCPBridge:
         arguments: dict[str, Any] | None = None,
         *,
         meta: dict[str, Any] | None = None,
+        tool_description: str | None = None,
+        input_schema: Any = None,
+        annotations: Any = None,
     ) -> Any:
         arguments = arguments or {}
-        kind = self._tool_kinds.get(tool_name, "")
-        if kind == "commit":
+        semantics = (
+            ToolSemantics.UNKNOWN
+            if self.condition == "baseline"
+            else self.tool_semantics_resolver.classify(
+                tool_name,
+                description=tool_description,
+                input_schema=_json_safe(input_schema),
+                annotations=_json_safe(annotations),
+            )
+        )
+        kind = {
+            ToolSemantics.READ: "lookup",
+            ToolSemantics.VERIFY: "verify",
+            ToolSemantics.SIDE_EFFECT: "commit",
+        }.get(semantics, "")
+        if semantics is ToolSemantics.UNKNOWN and self.condition == "guard":
+            self.diagnostics.commit_attempted = True
+            self.diagnostics.guard_decision = GuardDecision.REQUIRE_CLARIFICATION.value
+            return {
+                "isError": True,
+                "structuredContent": {
+                    "message": (
+                        "The tool's operational semantics could not be established. "
+                        "Clarification is required before it can be executed."
+                    )
+                },
+            }
+        if semantics is ToolSemantics.SIDE_EFFECT:
             self.diagnostics.commit_attempted = True
             proposed = ProposedToolCall(tool_name, kind, arguments)
             if self.governance is not None:
@@ -203,7 +247,7 @@ class RuntimeMCPBridge:
                     result,
                     self.governed_evidence(),
                 )
-        if kind == "commit":
+        if semantics is ToolSemantics.SIDE_EFFECT:
             self.diagnostics.commit_dispatched = True
         return result
 
@@ -243,3 +287,14 @@ class RuntimeMCPBridge:
             return self.governance.render()
         assert self.adapter is not None
         return self.adapter.render_governed_evidence()
+
+    @property
+    def semantic_diagnostics(self) -> tuple[str, ...]:
+        messages = list(
+            self.governance.diagnostics if self.governance is not None else ()
+        )
+        messages.extend(
+            str(item)
+            for item in getattr(self.tool_semantics_resolver, "diagnostics", ())
+        )
+        return tuple(messages)

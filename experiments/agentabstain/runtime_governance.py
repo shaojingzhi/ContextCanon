@@ -11,6 +11,7 @@ from contextcanon.governance import (
     ActionGovernanceDecision,
     ActionGovernanceResult,
     ActionRequest,
+    DependencyAssessment,
     EvidenceCandidate,
     FactDescriptor,
     FactNeedExtractor,
@@ -94,16 +95,24 @@ class RuntimeGovernance:
         return ingested
 
     def evaluate_action(self, proposed: ProposedToolCall) -> ActionGovernanceResult:
-        needs = self.fact_need_extractor.extract_for_action(ActionRequest(
+        extraction = self.fact_need_extractor.extract_for_action(ActionRequest(
             proposed.tool_name,
             proposed.parameters,
             context=self.action_context,
         ))
-        if getattr(self.fact_need_extractor, "last_failed", False):
-            return ActionGovernanceResult(
-                ActionGovernanceDecision.REQUIRE_CLARIFICATION
-            )
-        return self.store.evaluate_action(needs)
+        if (
+            extraction.assessment is DependencyAssessment.NO_DEPENDENCIES
+            and not extraction.needs
+        ):
+            return ActionGovernanceResult(ActionGovernanceDecision.ALLOW)
+        if (
+            extraction.assessment is DependencyAssessment.HAS_DEPENDENCIES
+            and extraction.needs
+        ):
+            return self.store.evaluate_action(list(extraction.needs))
+        return ActionGovernanceResult(
+            ActionGovernanceDecision.REQUIRE_CLARIFICATION
+        )
 
     def render(self) -> str:
         lines = ["Governed runtime evidence:"]

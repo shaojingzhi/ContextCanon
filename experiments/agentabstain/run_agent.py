@@ -17,6 +17,7 @@ from contextcanon.governance import (
     LLMRelationClassifier,
 )
 from contextcanon.semantic import LLMStructuredExtractor, OpenAICompatibleExtractionClient
+from contextcanon.tool_semantics import LLMToolSemanticsResolver
 
 from .adapter import AgentAbstainAdapter
 from .openai_runtime import build_contextcanon_server_class, official_server_env
@@ -127,6 +128,7 @@ async def run_one(args: argparse.Namespace, task: str, side: str) -> dict[str, A
     server_type = build_contextcanon_server_class(args.agentabstain_repo)
     adapter = AgentAbstainAdapter() if args.extractor == "legacy" else None
     governance = None
+    tool_semantics_resolver = None
     if args.extractor == "llm":
         api_key = os.environ.get("DEEPSEEK_API_KEY") or os.environ["OPENAI_API_KEY"]
         semantic_client = OpenAICompatibleExtractionClient(
@@ -140,6 +142,10 @@ async def run_one(args: argparse.Namespace, task: str, side: str) -> dict[str, A
             model=args.model,
         )
         fact_need_extractor = LLMFactNeedExtractor(
+            semantic_client,
+            model=args.model,
+        )
+        tool_semantics_resolver = LLMToolSemanticsResolver(
             semantic_client,
             model=args.model,
         )
@@ -158,6 +164,7 @@ async def run_one(args: argparse.Namespace, task: str, side: str) -> dict[str, A
         tool_filter={"blocked_tool_names": [export_name]},
         adapter=adapter,
         governance=governance,
+        tool_semantics_resolver=tool_semantics_resolver,
         condition=args.condition,
     )
     final_output = None
@@ -189,7 +196,7 @@ async def run_one(args: argparse.Namespace, task: str, side: str) -> dict[str, A
         except Exception as exc:
             model_error = _format_exception("model_request", exc)
         try:
-            exported = await server.call_tool(export_name, {})
+            exported = await server.call_runtime_control_tool(export_name, {})
             export_payload = normalize_export(_structured_content(exported))
         except Exception as exc:
             runtime_export_error = _format_exception("runtime_export", exc)
@@ -209,6 +216,7 @@ async def run_one(args: argparse.Namespace, task: str, side: str) -> dict[str, A
         "semantic_aligner": "llm" if governance is not None else "legacy-exact",
         "relation_classifier": "llm" if governance is not None else "legacy-rules",
         "fact_need_extractor": "llm" if governance is not None else "legacy-map",
+        "tool_semantics_resolver": "llm" if governance is not None else "legacy-map",
         "contextcanon": True,
         "commit_attempted": server.contextcanon_bridge.diagnostics.commit_attempted,
         "commit_dispatched": server.contextcanon_bridge.diagnostics.commit_dispatched,
@@ -241,9 +249,12 @@ async def run_one(args: argparse.Namespace, task: str, side: str) -> dict[str, A
         ],
         "diagnostics": server.contextcanon_bridge.diagnostics.to_dict(),
         "extraction_diagnostics": list(
-            server.contextcanon_bridge.governance.diagnostics
-            if server.contextcanon_bridge.governance is not None
-            else server.contextcanon_bridge.adapter.extraction_diagnostics
+            server.contextcanon_bridge.semantic_diagnostics
+            or (
+                server.contextcanon_bridge.adapter.extraction_diagnostics
+                if server.contextcanon_bridge.adapter is not None
+                else ()
+            )
         ),
     }
 

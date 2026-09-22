@@ -16,6 +16,7 @@ from contextcanon.governance import (
     ActionGovernanceDecision,
     ActionRequest,
     AlignmentResult,
+    DependencyAssessment,
     EvidenceCandidate,
     FactDescriptor,
     FactNeed,
@@ -106,7 +107,9 @@ class MutableClock:
 
 class OpenWorldGovernanceTests(unittest.TestCase):
     def test_llm_fact_need_extractor_returns_ephemeral_fact_need(self) -> None:
-        client = FakeSemanticClient([{"needs": [{
+        client = FakeSemanticClient([{
+            "assessment": "HAS_DEPENDENCIES",
+            "needs": [{
             "subject_hint": "Spring Gala",
             "semantic_dimension": "the date when the event takes place",
             "expected_value_type": "date",
@@ -114,17 +117,62 @@ class OpenWorldGovernanceTests(unittest.TestCase):
             "required": True,
         }]}])
         extractor = LLMFactNeedExtractor(client)
-        needs = extractor.extract_for_action(ActionRequest(
+        result = extractor.extract_for_action(ActionRequest(
             "messages.send",
             {
                 "text": "Spring Gala will take place on March 22",
                 "gold_answer": "must-not-leak",
             },
         ))
-        self.assertEqual(len(needs), 1)
-        self.assertEqual(needs[0].subject_hint, "Spring Gala")
+        self.assertEqual(result.assessment, DependencyAssessment.HAS_DEPENDENCIES)
+        self.assertEqual(len(result.needs), 1)
+        self.assertEqual(result.needs[0].subject_hint, "Spring Gala")
         self.assertNotIn("gold_answer", client.prompts[0])
         self.assertNotIn("must-not-leak", client.prompts[0])
+
+    def test_fact_need_extractor_preserves_empty_has_dependencies(self) -> None:
+        client = FakeSemanticClient([{
+            "assessment": "HAS_DEPENDENCIES",
+            "needs": [],
+        }])
+        result = LLMFactNeedExtractor(client).extract_for_action(
+            ActionRequest("messages.send", {"text": "External fact"})
+        )
+        self.assertEqual(result.assessment, DependencyAssessment.HAS_DEPENDENCIES)
+        self.assertEqual(result.needs, ())
+
+    def test_fact_need_extractor_returns_unknown_for_malformed_output(self) -> None:
+        result = LLMFactNeedExtractor(FakeSemanticClient([{"needs": "bad"}])).extract_for_action(
+            ActionRequest("messages.send", {})
+        )
+        self.assertEqual(result.assessment, DependencyAssessment.UNKNOWN)
+
+    def test_fact_need_extractor_accepts_explicit_no_dependencies(self) -> None:
+        client = FakeSemanticClient([{
+            "assessment": "NO_DEPENDENCIES",
+            "needs": [],
+        }])
+        result = LLMFactNeedExtractor(client).extract_for_action(
+            ActionRequest("healthcheck.ping", {})
+        )
+        self.assertEqual(result.assessment, DependencyAssessment.NO_DEPENDENCIES)
+        self.assertEqual(result.needs, ())
+
+    def test_fact_need_extractor_rejects_inconsistent_no_dependencies(self) -> None:
+        client = FakeSemanticClient([{
+            "assessment": "NO_DEPENDENCIES",
+            "needs": [{
+                "subject_hint": "Deployment",
+                "semantic_dimension": "window",
+                "expected_value_type": "time",
+                "temporal_scope": "CURRENT",
+                "required": True,
+            }],
+        }])
+        result = LLMFactNeedExtractor(client).extract_for_action(
+            ActionRequest("production.deploy", {})
+        )
+        self.assertEqual(result.assessment, DependencyAssessment.UNKNOWN)
 
     def test_llm_aligner_handles_semantic_paraphrases(self) -> None:
         client = FakeSemanticClient([
@@ -426,6 +474,41 @@ class OpenWorldGovernanceTests(unittest.TestCase):
 
         self.assertEqual(len(store.facts), 1)
         self.assertEqual(governed.state, GovernanceState.DIVERGED)
+
+    def test_alignment_falls_back_to_bounded_recent_facts_without_token_overlap(self) -> None:
+        class CountingAligner:
+            def __init__(self):
+                self.calls = 0
+
+            def align(self, incoming, existing_fact):
+                self.calls += 1
+                if (
+                    incoming.fact.subject == "production authentication"
+                    and existing_fact.subject == "login service"
+                ):
+                    return AlignmentResult(FactAlignment.SAME_FACT, 0.95)
+                return AlignmentResult(FactAlignment.UNRELATED, 0.95)
+
+        aligner = CountingAligner()
+        store = GovernanceStore(aligner=aligner, alignment_candidate_limit=2)
+        store.ingest(_candidate(
+            "login", "config", "JWT",
+            subject="login service",
+            dimension="authentication protocol",
+        ))
+        store.ingest(_candidate(
+            "billing", "billing-config", "enabled",
+            subject="billing service",
+            dimension="availability",
+        ))
+        store.ingest(_candidate(
+            "incoming", "runtime", "JWT",
+            subject="production authentication",
+            dimension="login mechanism",
+        ))
+
+        self.assertEqual(len(store.facts), 2)
+        self.assertLessEqual(aligner.calls, 3)
 
     def test_unknown_alignment_does_not_aggressively_merge(self) -> None:
         class UnknownAligner:

@@ -22,10 +22,10 @@ DeepSeek endpoint (`OPENAI_BASE_URL=https://api.deepseek.com`) and maps
 `DEEPSEEK_API_KEY` to the SDK's `OPENAI_API_KEY` in memory only. API keys are
 never written to result metadata.
 
-The tool-kind map in `openai_runtime.py` is intentionally limited to this
-spike because the upstream MCP schema does not expose the benchmark's internal
-lookup/verify/commit labels. It is not a registry or a generic extraction
-framework.
+The tool-kind map in `openai_runtime.py` is intentionally limited to legacy
+AgentAbstain compatibility because the upstream MCP schema does not expose the
+benchmark's internal lookup/verify/commit labels. It is wrapped by
+`AgentAbstainStaticToolSemanticsResolver` and is not the generic runtime design.
 
 ## CI boundaries
 
@@ -70,9 +70,21 @@ M8.2 adds an opt-in generic runtime while keeping
 the boundary on one explicitly authorized run, pass `--extractor llm` to
 `run_agent`. The generic path uses one shared semantic client for extraction,
 fact alignment, evidence-relation classification, and ephemeral `FactNeed`
-extraction. These model calls recognize semantics; `GovernanceStore` owns
-freshness, evidence lifecycle, state transitions, query output, and action
-enforcement.
+extraction, plus generic tool-semantic classification. FactNeed extraction
+explicitly distinguishes `HAS_DEPENDENCIES`, `NO_DEPENDENCIES`, and `UNKNOWN`;
+uncertain or inconsistent output fails closed. Tool calls are routed through a
+`ToolSemanticsResolver` as `READ`, `VERIFY`, `SIDE_EFFECT`, or `UNKNOWN`, while
+the static AgentAbstain mapping remains compatibility-only. These model calls
+recognize semantics; `GovernanceStore` owns freshness, evidence lifecycle,
+state transitions, query output, and deterministic action enforcement.
+
+Alignment candidate selection is lexical-first with a bounded recent-fact
+fallback when subject words do not overlap. This permits semantic paraphrase
+alignment without an unbounded history scan. Runtime evidence rendering still
+shows the full task-local store; relevant/delta rendering remains future work.
+
+The design boundary remains: **semantic conflict recognition + deterministic
+governance transition**.
 
 Run a deterministic replay without API keys:
 

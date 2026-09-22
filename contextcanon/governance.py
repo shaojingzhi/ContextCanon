@@ -85,6 +85,18 @@ class FactNeed:
 ActionDependency = FactNeed
 
 
+class DependencyAssessment(StrEnum):
+    HAS_DEPENDENCIES = "HAS_DEPENDENCIES"
+    NO_DEPENDENCIES = "NO_DEPENDENCIES"
+    UNKNOWN = "UNKNOWN"
+
+
+@dataclass(frozen=True, slots=True)
+class FactNeedExtractionResult:
+    assessment: DependencyAssessment
+    needs: tuple[FactNeed, ...] = ()
+
+
 @dataclass(frozen=True, slots=True)
 class ActionRequest:
     tool_name: str
@@ -94,7 +106,7 @@ class ActionRequest:
 
 
 class FactNeedExtractor(Protocol):
-    def extract_for_action(self, action: ActionRequest) -> list[FactNeed]:
+    def extract_for_action(self, action: ActionRequest) -> FactNeedExtractionResult:
         ...
 
 
@@ -317,10 +329,8 @@ class LLMFactNeedExtractor:
         self.client = client
         self.model = model
         self.diagnostics: list[str] = []
-        self.last_failed = False
 
-    def extract_for_action(self, action: ActionRequest) -> list[FactNeed]:
-        self.last_failed = False
+    def extract_for_action(self, action: ActionRequest) -> FactNeedExtractionResult:
         payload = {
             "tool_name": action.tool_name,
             "tool_description": action.tool_description,
@@ -328,11 +338,18 @@ class LLMFactNeedExtractor:
             "context": sanitize_runtime_value(action.context),
         }
         prompt = (
-            "Extract factual dependencies required to safely execute this proposed action. "
-            "Return JSON with a needs array. Each need contains subject_hint, "
+            "Assess and extract factual dependencies required to safely execute this "
+            "proposed action. Return JSON with assessment and a needs array. assessment "
+            "must be HAS_DEPENDENCIES, NO_DEPENDENCIES, or UNKNOWN. HAS_DEPENDENCIES means "
+            "the action contains or relies on factual claims whose correctness matters. "
+            "NO_DEPENDENCIES means the action can execute correctly without any factual "
+            "claim from external runtime evidence. UNKNOWN means this is unclear. Be "
+            "conservative. Each need contains subject_hint, "
             "semantic_dimension, expected_value_type or null, temporal_scope or null, and "
-            "required. Do not output ALLOW, BLOCK, or any governance state. Return an empty "
-            "array when the action has no factual dependency.\n"
+            "required. Do not output ALLOW, BLOCK, REQUIRE_CLARIFICATION, or any governance "
+            "state. Examples: send_message containing an event date and submit_return whose "
+            "eligibility depends on order state are HAS_DEPENDENCIES; a healthcheck ping "
+            "with no external factual assertion is NO_DEPENDENCIES.\n"
             + json.dumps(payload, ensure_ascii=False, sort_keys=True)
         )
         try:
@@ -340,24 +357,31 @@ class LLMFactNeedExtractor:
                 self.client.complete(prompt, model=self.model)
             )
             if not isinstance(result, Mapping) or not isinstance(result.get("needs"), list):
-                raise ValueError("fact need response must contain a needs array")
+                raise ValueError("fact need response must contain assessment and needs")
+            assessment = DependencyAssessment(str(result.get("assessment", "UNKNOWN")).upper())
             needs: list[FactNeed] = []
+            invalid_need = False
             for item in result["needs"]:
                 if not isinstance(item, Mapping):
+                    invalid_need = True
                     continue
                 subject = item.get("subject_hint")
                 dimension = item.get("semantic_dimension")
                 if not isinstance(subject, str) or not subject.strip():
+                    invalid_need = True
                     continue
                 if not isinstance(dimension, str) or not dimension.strip():
+                    invalid_need = True
                     continue
                 raw_scope = item.get("temporal_scope")
                 scope = None if raw_scope is None else TemporalScope(str(raw_scope).upper())
                 expected_type = item.get("expected_value_type")
                 if expected_type is not None and not isinstance(expected_type, str):
+                    invalid_need = True
                     continue
                 required = item.get("required", True)
                 if not isinstance(required, bool):
+                    invalid_need = True
                     continue
                 needs.append(FactNeed(
                     subject.strip(),
@@ -366,14 +390,16 @@ class LLMFactNeedExtractor:
                     scope,
                     required,
                 ))
-            if result["needs"] and not needs:
-                self.diagnostics.append("fact_need_error:no_acceptable_needs")
-                self.last_failed = True
-            return needs
+            if invalid_need:
+                self.diagnostics.append("fact_need_error:invalid_need")
+                return FactNeedExtractionResult(DependencyAssessment.UNKNOWN)
+            if assessment is DependencyAssessment.NO_DEPENDENCIES and needs:
+                self.diagnostics.append("fact_need_error:inconsistent_assessment")
+                return FactNeedExtractionResult(DependencyAssessment.UNKNOWN)
+            return FactNeedExtractionResult(assessment, tuple(needs))
         except Exception as exc:
             self.diagnostics.append(f"fact_need_error:{type(exc).__name__}")
-            self.last_failed = True
-            return []
+            return FactNeedExtractionResult(DependencyAssessment.UNKNOWN)
 
 
 @dataclass(frozen=True, slots=True)
@@ -568,12 +594,14 @@ class GovernanceStore:
         fact: FactDescriptor,
     ) -> list[GovernedFact]:
         subject_tokens = set(_semantic_text(fact.subject).split())
-        candidates = [
+        lexical_candidates = [
             governed
             for governed in reversed(self.facts)
             if subject_tokens & set(_semantic_text(governed.fact.subject).split())
         ]
-        return candidates[: self.alignment_candidate_limit]
+        if lexical_candidates:
+            return lexical_candidates[: self.alignment_candidate_limit]
+        return list(reversed(self.facts))[: self.alignment_candidate_limit]
 
     def _now(self) -> datetime:
         current = self.clock()
@@ -634,12 +662,14 @@ __all__ = [
     "ActionRequest",
     "AlignmentResult",
     "DeterministicRelationClassifier",
+    "DependencyAssessment",
     "EvidenceAligner",
     "EvidenceCandidate",
     "EvidenceRelationRecord",
     "ExactFactAligner",
     "FactDescriptor",
     "FactNeed",
+    "FactNeedExtractionResult",
     "FactNeedExtractor",
     "GovernanceRecord",
     "GovernanceStore",

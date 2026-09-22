@@ -8,6 +8,11 @@ from pathlib import Path
 from typing import Any
 
 from contextcanon.semantic import SemanticExtractor
+from contextcanon.tool_semantics import (
+    StaticToolSemanticsResolver,
+    ToolSemantics,
+    ToolSemanticsResolver,
+)
 
 from .adapter import AgentAbstainAdapter
 from .harness import RuntimeMCPBridge
@@ -37,6 +42,21 @@ SPIKE_TOOL_KINDS = {
     "disaster_relief_operations.verify_shelter_status": "verify",
     "document_authoring_and_publication.verify_external_records": "verify",
 }
+
+
+class AgentAbstainStaticToolSemanticsResolver(StaticToolSemanticsResolver):
+    """Compatibility-only semantics for the deterministic AgentAbstain spike."""
+
+    def __init__(self) -> None:
+        kind_to_semantics = {
+            "lookup": ToolSemantics.READ,
+            "verify": ToolSemantics.VERIFY,
+            "commit": ToolSemantics.SIDE_EFFECT,
+        }
+        super().__init__({
+            name: kind_to_semantics[kind]
+            for name, kind in SPIKE_TOOL_KINDS.items()
+        })
 
 
 def canonical_tool_name(encoded_name: str, encoded_to_original: dict[str, str]) -> str:
@@ -69,16 +89,47 @@ def build_contextcanon_server_class(agentabstain_repo: str | Path):
         def __init__(self, *args: Any, adapter: AgentAbstainAdapter | None = None,
                      extractor: SemanticExtractor | None = None,
                      governance: RuntimeGovernance | None = None,
+                     tool_semantics_resolver: ToolSemanticsResolver | None = None,
                      condition: str, **kwargs: Any):
             super().__init__(*args, **kwargs)
+            self._contextcanon_tool_metadata: dict[str, dict[str, Any]] = {}
             self._contextcanon_bridge = RuntimeMCPBridge(
                 self._dispatch_canonical,
-                SPIKE_TOOL_KINDS,
+                tool_semantics_resolver or AgentAbstainStaticToolSemanticsResolver(),
                 condition=condition,
                 adapter=adapter,
                 extractor=extractor,
                 governance=governance,
             )
+
+        async def list_tools(self, run_context=None, agent=None):
+            tools = await super().list_tools(run_context, agent)
+            metadata: dict[str, dict[str, Any]] = {}
+            for tool in tools:
+                canonical_name = canonical_tool_name(
+                    tool.name,
+                    getattr(self, "_encoded_to_original", {}),
+                )
+                metadata[canonical_name] = {
+                    "description": getattr(tool, "description", None),
+                    "input_schema": getattr(
+                        tool,
+                        "inputSchema",
+                        getattr(tool, "input_schema", None),
+                    ),
+                    "annotations": getattr(tool, "annotations", None),
+                }
+            self._contextcanon_tool_metadata = metadata
+            return tools
+
+        async def call_runtime_control_tool(
+            self,
+            tool_name: str,
+            arguments: dict[str, Any] | None = None,
+        ) -> Any:
+            """Call a host-only control tool outside model-facing governance routing."""
+
+            return await self._dispatch_canonical(tool_name, arguments or {})
 
         async def _dispatch_canonical(
             self,
@@ -104,10 +155,14 @@ def build_contextcanon_server_class(agentabstain_repo: str | Path):
             canonical_name = canonical_tool_name(
                 tool_name, getattr(self, "_encoded_to_original", {})
             )
+            metadata = self._contextcanon_tool_metadata.get(canonical_name, {})
             return await self._contextcanon_bridge.call_tool(
                 canonical_name,
                 arguments,
                 meta=meta,
+                tool_description=metadata.get("description"),
+                input_schema=metadata.get("input_schema"),
+                annotations=metadata.get("annotations"),
             )
 
         @property
