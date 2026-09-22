@@ -68,6 +68,13 @@ generic ContextCanon runtime evidence extraction design. The spike does not
 prove benchmark performance improvement. The main unsolved problem is generic
 semantic claim extraction from arbitrary tool observations.
 
+M8 adds an opt-in generic `LLMStructuredExtractor` while keeping
+`LegacyRuleExtractor` as the deterministic default for this spike. To compare
+the boundary on one explicitly authorized run, pass `--extractor llm` to
+`run_agent`; this makes one structured extraction request per observed tool
+result. The extractor only proposes claims. Provenance, normalization,
+conflict detection, and the pre-action guard remain deterministic.
+
 Run a deterministic replay without API keys:
 
 ```text

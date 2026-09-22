@@ -10,6 +10,8 @@ import json
 from dataclasses import dataclass
 from typing import Any, Awaitable, Callable, Mapping
 
+from contextcanon.semantic import SemanticExtractor
+
 from .adapter import (
     AgentAbstainAdapter,
     GuardDecision,
@@ -114,13 +116,14 @@ class RuntimeMCPBridge:
         *,
         condition: str,
         adapter: AgentAbstainAdapter | None = None,
+        extractor: SemanticExtractor | None = None,
     ) -> None:
         if condition not in {"baseline", "governed", "guard"}:
             raise ValueError("condition must be baseline, governed, or guard")
         self._call_tool = call_tool
         self._tool_kinds = dict(tool_kinds)
         self.condition = condition
-        self.adapter = adapter or AgentAbstainAdapter()
+        self.adapter = adapter or AgentAbstainAdapter(extractor=extractor)
         self.call_index = 0
         self.diagnostics = BridgeDiagnostics()
 
@@ -197,7 +200,7 @@ class RuntimeMCPBridge:
         error: str | None = None,
     ) -> None:
         self.diagnostics.observations_seen += 1
-        claim = self.adapter.observe_tool_result(
+        claims = self.adapter.observe_tool_result(
             RuntimeObservation(
                 tool_name=tool_name,
                 tool_kind=tool_kind,
@@ -208,8 +211,7 @@ class RuntimeMCPBridge:
                 error=error,
             )
         )
-        if claim is not None:
-            self.diagnostics.claims_created += 1
+        self.diagnostics.claims_created += len(claims)
         self.diagnostics.conflicts_detected = len(self.adapter.ledger.conflicts())
         self.call_index += 1
 

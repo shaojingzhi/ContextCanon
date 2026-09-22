@@ -10,12 +10,15 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from contextcanon.semantic import LLMStructuredExtractor, OpenAICompatibleExtractionClient
+
 from .adapter import AgentAbstainAdapter
 from .openai_runtime import build_contextcanon_server_class, official_server_env
 
 TASKS = ("preview_008", "preview_013", "preview_015")
 SIDES = ("act", "abstain")
 CONDITIONS = ("baseline", "governed", "guard")
+EXTRACTORS = ("legacy", "llm")
 
 
 def _format_exception(stage: str, exc: BaseException) -> str:
@@ -91,11 +94,19 @@ async def run_one(args: argparse.Namespace, task: str, side: str) -> dict[str, A
     bundle = BaseAgent.load_task_bundle("conflicting_evidence", task, side)
     artifact_dir = agent.build_artifact_dir(bundle.category, bundle.task_id, bundle.task_type)
     server_type = build_contextcanon_server_class(args.agentabstain_repo)
+    extractor = None
+    if args.extractor == "llm":
+        api_key = os.environ.get("DEEPSEEK_API_KEY") or os.environ["OPENAI_API_KEY"]
+        extraction_client = OpenAICompatibleExtractionClient(
+            api_key,
+            base_url=os.environ.get("OPENAI_BASE_URL", "https://api.deepseek.com"),
+        )
+        extractor = LLMStructuredExtractor(extraction_client, model=args.model)
     server = server_type(
         name="task_env",
         params={"command": sys.executable, "args": build_server_args(bundle), "cwd": str(args.agentabstain_repo), "env": official_server_env()},
         tool_filter={"blocked_tool_names": [export_name]},
-        adapter=AgentAbstainAdapter(),
+        adapter=AgentAbstainAdapter(extractor=extractor),
         condition=args.condition,
     )
     final_output = None
@@ -143,6 +154,7 @@ async def run_one(args: argparse.Namespace, task: str, side: str) -> dict[str, A
         "thinking": "enabled",
         "reasoning_effort": "high",
         "condition": args.condition,
+        "semantic_extractor": args.extractor,
         "contextcanon": True,
         "commit_attempted": server.contextcanon_bridge.diagnostics.commit_attempted,
         "commit_dispatched": server.contextcanon_bridge.diagnostics.commit_dispatched,
@@ -169,6 +181,9 @@ async def run_one(args: argparse.Namespace, task: str, side: str) -> dict[str, A
             if isinstance(entry, dict) and isinstance(entry.get("tool"), str)
         ],
         "diagnostics": server.contextcanon_bridge.diagnostics.to_dict(),
+        "extraction_diagnostics": list(
+            server.contextcanon_bridge.adapter.extraction_diagnostics
+        ),
     }
 
 
@@ -207,6 +222,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--side", choices=(*SIDES, "all"), default="abstain")
     parser.add_argument("--condition", choices=CONDITIONS, default="guard")
     parser.add_argument("--model", default="deepseek-v4-pro")
+    parser.add_argument("--extractor", choices=EXTRACTORS, default="legacy")
     parser.add_argument("--max-turns", type=int, default=30)
     parser.add_argument("--results-root", default="experiments/agentabstain/results")
     parser.add_argument("--run", action="store_true", help="required before making model/API calls")

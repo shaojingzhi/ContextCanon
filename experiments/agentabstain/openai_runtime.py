@@ -7,6 +7,8 @@ import os
 from pathlib import Path
 from typing import Any
 
+from contextcanon.semantic import SemanticExtractor
+
 from .adapter import AgentAbstainAdapter
 from .harness import RuntimeMCPBridge
 
@@ -63,13 +65,15 @@ def build_contextcanon_server_class(agentabstain_repo: str | Path):
     class ContextCanonOpenAIMCPServer(_NameSafeMCPServer):
         """Preserve upstream behavior while intercepting decoded MCP calls."""
 
-        def __init__(self, *args: Any, adapter: AgentAbstainAdapter, condition: str, **kwargs: Any):
+        def __init__(self, *args: Any, adapter: AgentAbstainAdapter | None = None,
+                     extractor: SemanticExtractor | None = None, condition: str, **kwargs: Any):
             super().__init__(*args, **kwargs)
             self._contextcanon_bridge = RuntimeMCPBridge(
                 self._dispatch_canonical,
                 SPIKE_TOOL_KINDS,
                 condition=condition,
                 adapter=adapter,
+                extractor=extractor,
             )
 
         async def _dispatch_canonical(

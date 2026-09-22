@@ -15,6 +15,13 @@ from enum import StrEnum
 from typing import Iterable
 
 from contextcanon.core import Evidence, EvidenceRole, SourceType
+from contextcanon.semantic import (
+    ClaimCandidate,
+    ExtractionContext,
+    Provenance,
+    SemanticExtractor,
+    normalize_candidate,
+)
 
 
 _ALLOWED_OBSERVATION_KEYS = frozenset(
@@ -64,6 +71,8 @@ class RuntimeClaim:
     predicate: str
     value: str
     evidence: Evidence
+    confidence: float | None = None
+    provenance: Provenance | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -303,19 +312,90 @@ def _extract(observation: RuntimeObservation) -> RuntimeClaim | None:
     return RuntimeClaim(subject, predicate, value, evidence)
 
 
+class LegacyRuleExtractor:
+    """Compatibility extractor for the original three-task validation spike."""
+
+    def extract(
+        self,
+        observation: RuntimeObservation,
+        context: ExtractionContext | None = None,
+    ) -> list[ClaimCandidate]:
+        del context
+        claim = _extract(observation)
+        if claim is None:
+            return []
+        location = claim.evidence.location
+        return [
+            ClaimCandidate(
+                entity=claim.subject,
+                property=claim.predicate,
+                value=claim.value,
+                value_type="date" if claim.predicate == "date" else "enum",
+                role=claim.evidence.role.value,
+                confidence=1.0,
+                provenance=Provenance(
+                    observation_id=f"call:{observation.call_index}",
+                    tool_name=observation.tool_name,
+                    tool_arguments=(
+                        observation.tool_parameters
+                        if observation.tool_parameters is None
+                        or isinstance(observation.tool_parameters, (str, bool, int, float, list, dict))
+                        else str(observation.tool_parameters)
+                    ),
+                    location=location,
+                    excerpt=_text(observation.tool_result),
+                ),
+            )
+        ]
+
+
+def _runtime_claim(candidate: ClaimCandidate) -> RuntimeClaim:
+    try:
+        role = EvidenceRole(candidate.role)
+    except ValueError as exc:
+        raise ValueError(f"unsupported evidence role: {candidate.role}") from exc
+    evidence_id = _stable_id(
+        "runtime-evidence",
+        [candidate.provenance.observation_id, candidate.provenance.tool_name,
+         candidate.provenance.location, candidate.value],
+    )
+    evidence = Evidence(
+        id=evidence_id,
+        source_id=candidate.provenance.tool_name,
+        source_type=SourceType.OTHER,
+        location=candidate.provenance.location,
+        role=role,
+        content=candidate.value,
+        verified=None,
+    )
+    value = candidate.value if isinstance(candidate.value, str) else _text(candidate.value)
+    return RuntimeClaim(
+        candidate.entity,
+        candidate.property,
+        value,
+        evidence,
+        candidate.confidence,
+        candidate.provenance,
+    )
+
+
 @dataclass(slots=True)
 class EvidenceLedger:
     """Task-local in-memory ledger; failed calls never become evidence."""
 
     observations: list[RuntimeObservation] = field(default_factory=list)
     claims: list[RuntimeClaim] = field(default_factory=list)
+    extractor: SemanticExtractor = field(default_factory=LegacyRuleExtractor)
 
-    def record(self, observation: RuntimeObservation) -> RuntimeClaim | None:
+    def record(self, observation: RuntimeObservation) -> list[RuntimeClaim]:
         self.observations.append(observation)
-        claim = _extract(observation)
-        if claim is not None:
-            self.claims.append(claim)
-        return claim
+        claims = []
+        for candidate in self.extractor.extract(observation):
+            normalized = normalize_candidate(candidate)
+            if normalized is not None:
+                claims.append(_runtime_claim(normalized))
+        self.claims.extend(claims)
+        return claims
 
     def conflicts(self) -> list[ConflictRecord]:
         grouped: dict[tuple[str, str], list[RuntimeClaim]] = defaultdict(list)
@@ -339,10 +419,10 @@ class EvidenceLedger:
 class AgentAbstainAdapter:
     """Minimal observation/guard boundary for the three selected task shapes."""
 
-    def __init__(self) -> None:
-        self.ledger = EvidenceLedger()
+    def __init__(self, *, extractor: SemanticExtractor | None = None) -> None:
+        self.ledger = EvidenceLedger(extractor=extractor or LegacyRuleExtractor())
 
-    def observe_tool_result(self, observation: RuntimeObservation) -> RuntimeClaim | None:
+    def observe_tool_result(self, observation: RuntimeObservation) -> list[RuntimeClaim]:
         return self.ledger.record(observation)
 
     def evaluate_proposed_commit(self, proposed: ProposedToolCall) -> GuardDecision:
@@ -389,10 +469,14 @@ class AgentAbstainAdapter:
             )
         return "\n".join(lines)
 
+    @property
+    def extraction_diagnostics(self) -> tuple[str, ...]:
+        diagnostics = getattr(self.ledger.extractor, "diagnostics", ())
+        return tuple(str(item) for item in diagnostics)
+
 
 def replay(observations: Iterable[RuntimeObservation]) -> AgentAbstainAdapter:
     adapter = AgentAbstainAdapter()
     for observation in sorted(observations, key=lambda item: item.call_index):
         adapter.observe_tool_result(observation)
     return adapter
-
