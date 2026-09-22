@@ -11,6 +11,7 @@ from contextcanon.semantic import SemanticExtractor
 
 from .adapter import AgentAbstainAdapter
 from .harness import RuntimeMCPBridge
+from .runtime_governance import RuntimeGovernance
 
 
 # The upstream MCP schema currently exposes no ``kind`` field to the MCP
@@ -66,7 +67,9 @@ def build_contextcanon_server_class(agentabstain_repo: str | Path):
         """Preserve upstream behavior while intercepting decoded MCP calls."""
 
         def __init__(self, *args: Any, adapter: AgentAbstainAdapter | None = None,
-                     extractor: SemanticExtractor | None = None, condition: str, **kwargs: Any):
+                     extractor: SemanticExtractor | None = None,
+                     governance: RuntimeGovernance | None = None,
+                     condition: str, **kwargs: Any):
             super().__init__(*args, **kwargs)
             self._contextcanon_bridge = RuntimeMCPBridge(
                 self._dispatch_canonical,
@@ -74,6 +77,7 @@ def build_contextcanon_server_class(agentabstain_repo: str | Path):
                 condition=condition,
                 adapter=adapter,
                 extractor=extractor,
+                governance=governance,
             )
 
         async def _dispatch_canonical(

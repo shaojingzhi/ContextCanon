@@ -57,23 +57,22 @@ Only runtime observations are accepted: tool name, tool kind, parameters,
 result, success/error, and call index. Benchmark labels and evaluator metadata
 are rejected before they reach the governance layer.
 
-The flow is:
+The legacy deterministic validation flow is:
 
 ```text
 runtime observation → task-local claim/evidence → conflict record → commit guard
 ```
 
-The extraction rules are deliberately task-specific and are not the final
-generic ContextCanon runtime evidence extraction design. The spike does not
-prove benchmark performance improvement. The main unsolved problem is generic
-semantic claim extraction from arbitrary tool observations.
+Those extraction rules remain for offline compatibility and Gate 1–3 only.
 
-M8 adds an opt-in generic `LLMStructuredExtractor` while keeping
+M8.2 adds an opt-in generic runtime while keeping
 `LegacyRuleExtractor` as the deterministic default for this spike. To compare
 the boundary on one explicitly authorized run, pass `--extractor llm` to
-`run_agent`; this makes one structured extraction request per observed tool
-result. The extractor only proposes claims. Provenance, normalization,
-conflict detection, and the pre-action guard remain deterministic.
+`run_agent`. The generic path uses one shared semantic client for extraction,
+fact alignment, evidence-relation classification, and ephemeral `FactNeed`
+extraction. These model calls recognize semantics; `GovernanceStore` owns
+freshness, evidence lifecycle, state transitions, query output, and action
+enforcement.
 
 Run a deterministic replay without API keys:
 

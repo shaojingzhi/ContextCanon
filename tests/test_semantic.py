@@ -20,6 +20,14 @@ def _provenance() -> Provenance:
     return Provenance("obs-1", "tool.read", {}, "tool_result", "source excerpt")
 
 
+class FakeSemanticClient:
+    def __init__(self, callback):
+        self.callback = callback
+
+    def complete(self, prompt: str, *, model: str):
+        return self.callback(prompt, model)
+
+
 class SemanticExtractionTests(unittest.TestCase):
     def test_dates_normalize_without_forcing_a_semantic_dimension_key(self) -> None:
         responses = iter(
@@ -45,7 +53,9 @@ class SemanticExtractionTests(unittest.TestCase):
             call_index = 0
             tool_result = "unused"
 
-        extractor = LLMStructuredExtractor(lambda prompt, model: next(responses))
+        extractor = LLMStructuredExtractor(
+            FakeSemanticClient(lambda prompt, model: next(responses))
+        )
         first = extractor.extract(FakeObservation(), ExtractionContext("event date"))
         FakeObservation.call_index = 1
         second = extractor.extract(FakeObservation(), ExtractionContext("event date"))
@@ -62,7 +72,9 @@ class SemanticExtractionTests(unittest.TestCase):
             "value": "Delivered", "value_type": "enum",
             "role": "OBSERVED", "confidence": 0.9,
         }]})
-        extractor = LLMStructuredExtractor(lambda prompt, model: response)
+        extractor = LLMStructuredExtractor(
+            FakeSemanticClient(lambda prompt, model: response)
+        )
         observation = type(
             "Observation", (), {
                 "success": True, "tool_name": "records.lookup", "tool_kind": "lookup",
@@ -81,26 +93,51 @@ class SemanticExtractionTests(unittest.TestCase):
                 "tool_parameters": {}, "tool_result": "nothing useful", "call_index": 0,
             }
         )()
-        malformed = LLMStructuredExtractor(lambda prompt, model: "not json")
+        malformed = LLMStructuredExtractor(
+            FakeSemanticClient(lambda prompt, model: "not json")
+        )
         self.assertEqual(malformed.extract(observation), [])
         self.assertEqual(malformed.last_diagnostic, "extraction_error:JSONDecodeError")
 
-        low_confidence = LLMStructuredExtractor(lambda prompt, model: json.dumps({"claims": [{
+        low_confidence = LLMStructuredExtractor(FakeSemanticClient(lambda prompt, model: json.dumps({"claims": [{
             "entity": "x", "property": "status", "value": "open",
             "value_type": "enum", "role": "OBSERVED", "confidence": 0.2,
-        }]}))
+        }]})))
         self.assertEqual(low_confidence.extract(observation), [])
         self.assertEqual(low_confidence.last_diagnostic, "no_acceptable_claims")
 
     def test_failed_observation_produces_no_claim(self) -> None:
         observation = type("Observation", (), {"success": False, "tool_name": "tool"})()
-        extractor = LLMStructuredExtractor(lambda prompt, model: self.fail("must not call model"))
+        extractor = LLMStructuredExtractor(
+            FakeSemanticClient(lambda prompt, model: self.fail("must not call model"))
+        )
         self.assertEqual(extractor.extract(observation), [])
         self.assertEqual(extractor.last_diagnostic, "observation_failed")
 
+    def test_client_type_error_does_not_trigger_a_second_request(self) -> None:
+        class RaisingClient:
+            calls = 0
+
+            def complete(self, prompt: str, *, model: str):
+                self.calls += 1
+                raise TypeError("internal client bug")
+
+        client = RaisingClient()
+        observation = type(
+            "Observation", (), {
+                "success": True, "tool_name": "tool", "tool_kind": "lookup",
+                "tool_parameters": {}, "tool_result": "value", "call_index": 0,
+            }
+        )()
+        extractor = LLMStructuredExtractor(client)
+        self.assertEqual(extractor.extract(observation), [])
+        self.assertEqual(client.calls, 1)
+
     def test_prompt_excludes_benchmark_metadata(self) -> None:
         captured: list[str] = []
-        extractor = LLMStructuredExtractor(lambda prompt, model: captured.append(prompt) or {"claims": []})
+        extractor = LLMStructuredExtractor(FakeSemanticClient(
+            lambda prompt, model: captured.append(prompt) or {"claims": []}
+        ))
         observation = type(
             "Observation", (), {
                 "success": True, "tool_name": "tool", "tool_kind": "lookup",
@@ -116,9 +153,9 @@ class SemanticExtractionTests(unittest.TestCase):
 
     def test_business_metadata_fields_are_not_recursively_deleted(self) -> None:
         captured: list[str] = []
-        extractor = LLMStructuredExtractor(
+        extractor = LLMStructuredExtractor(FakeSemanticClient(
             lambda prompt, model: captured.append(prompt) or {"claims": []}
-        )
+        ))
         observation = type(
             "Observation", (), {
                 "success": True,
@@ -142,7 +179,7 @@ class SemanticExtractionTests(unittest.TestCase):
         self.assertIn('"task_id": "business-work-42"', prompt)
 
     def test_temporal_scope_is_preserved_as_semantic_metadata(self) -> None:
-        extractor = LLMStructuredExtractor(lambda prompt, model: {"claims": [{
+        extractor = LLMStructuredExtractor(FakeSemanticClient(lambda prompt, model: {"claims": [{
             "entity": "production authentication",
             "property": "target protocol",
             "value": "OAuth2",
@@ -150,7 +187,7 @@ class SemanticExtractionTests(unittest.TestCase):
             "role": "INTENDED",
             "confidence": 0.95,
             "temporal_scope": "future",
-        }]})
+        }]}))
         observation = type(
             "Observation", (), {
                 "success": True, "tool_name": "adr.read", "tool_kind": "lookup",
@@ -161,10 +198,10 @@ class SemanticExtractionTests(unittest.TestCase):
         self.assertEqual(candidate.temporal_scope, TemporalScope.FUTURE.value)
 
     def test_provenance_is_runtime_supplied(self) -> None:
-        extractor = LLMStructuredExtractor(lambda prompt, model: {"claims": [{
+        extractor = LLMStructuredExtractor(FakeSemanticClient(lambda prompt, model: {"claims": [{
             "entity": "Spring Gala", "property": "event_date", "value": "03/22/2026",
             "value_type": "date", "role": "OBSERVED", "confidence": 0.9,
-        }]})
+        }]}))
         observation = type(
             "Observation", (), {
                 "success": True, "tool_name": "filesystem.read_file", "tool_kind": "lookup",
@@ -194,7 +231,7 @@ class SemanticExtractionTests(unittest.TestCase):
         )
         self.assertEqual(adapter.ledger.claims[0].evidence.source_id, "tool.read")
 
-    def test_generic_claims_still_use_deterministic_conflict_detection(self) -> None:
+    def test_legacy_ledger_keeps_deterministic_fixture_conflicts(self) -> None:
         class FakeExtractor:
             def extract(self, observation, context=None):
                 return [ClaimCandidate(
@@ -218,10 +255,12 @@ class SemanticExtractionTests(unittest.TestCase):
             {"choices": [{"message": {"content": '{"claims": []}'}}]}
         ).encode("utf-8")
         with mock.patch("contextcanon.semantic.request.urlopen", return_value=response) as urlopen:
-            client("extract facts", "deepseek-v4-pro")
+            client.complete("extract facts", model="deepseek-v4-pro")
         body = json.loads(urlopen.call_args.args[0].data)
         self.assertEqual(body["response_format"], {"type": "json_object"})
         self.assertEqual(body["temperature"], 0)
+        self.assertEqual(body["thinking"], {"type": "enabled"})
+        self.assertEqual(body["reasoning_effort"], "high")
         self.assertNotIn("secret", json.dumps(body))
 
     def test_normalization_rejects_unsupported_role_and_type(self) -> None:

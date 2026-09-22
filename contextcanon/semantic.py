@@ -1,7 +1,7 @@
 """Small, provider-neutral semantic extraction boundary.
 
-The model may interpret an observation.  Normalization, provenance, and
-conflict handling remain deterministic in the caller.
+The model may interpret an observation. Normalization, provenance, and
+governance state transitions remain deterministic in the caller.
 """
 
 from __future__ import annotations
@@ -10,7 +10,7 @@ import hashlib
 import json
 import math
 import re
-from collections.abc import Callable, Mapping
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Protocol
@@ -72,6 +72,13 @@ class SemanticExtractor(Protocol):
         ...
 
 
+class SemanticModelClient(Protocol):
+    """One explicit model boundary shared by semantic runtime components."""
+
+    def complete(self, prompt: str, *, model: str) -> object:
+        ...
+
+
 def _json_safe(value: object) -> JSONValue:
     if value is None or isinstance(value, (str, bool, int)):
         return value
@@ -88,21 +95,21 @@ def _json_safe(value: object) -> JSONValue:
     return str(value)
 
 
-def _strip_forbidden(value: object) -> JSONValue:
+def sanitize_runtime_value(value: object) -> JSONValue:
     if isinstance(value, Mapping):
         return {
-            str(key): _strip_forbidden(item)
+            str(key): sanitize_runtime_value(item)
             for key, item in sorted(value.items(), key=lambda item: str(item[0]))
             if str(key).casefold() not in _FORBIDDEN_KEYS
         }
     if isinstance(value, (list, tuple)):
-        return [_strip_forbidden(item) for item in value]
+        return [sanitize_runtime_value(item) for item in value]
     return _json_safe(value)
 
 
 def _compact(value: object, limit: int = 800) -> str:
     text = value if isinstance(value, str) else json.dumps(
-        _strip_forbidden(value), ensure_ascii=False, sort_keys=True, separators=(",", ":")
+        sanitize_runtime_value(value), ensure_ascii=False, sort_keys=True, separators=(",", ":")
     )
     return text[:limit]
 
@@ -113,8 +120,8 @@ def observation_provenance(observation: object, *, location: str = "tool_result"
         payload = {
             "call_index": getattr(observation, "call_index", 0),
             "tool_name": getattr(observation, "tool_name", ""),
-            "tool_parameters": _strip_forbidden(getattr(observation, "tool_parameters", None)),
-            "tool_result": _strip_forbidden(getattr(observation, "tool_result", None)),
+            "tool_parameters": sanitize_runtime_value(getattr(observation, "tool_parameters", None)),
+            "tool_result": sanitize_runtime_value(getattr(observation, "tool_result", None)),
         }
         encoded = json.dumps(
             payload, ensure_ascii=True, sort_keys=True, separators=(",", ":")
@@ -123,7 +130,7 @@ def observation_provenance(observation: object, *, location: str = "tool_result"
     return Provenance(
         observation_id=explicit_id,
         tool_name=str(getattr(observation, "tool_name", "")),
-        tool_arguments=_strip_forbidden(getattr(observation, "tool_parameters", None)),
+        tool_arguments=sanitize_runtime_value(getattr(observation, "tool_parameters", None)),
         location=location,
         excerpt=_compact(getattr(observation, "tool_result", None)),
     )
@@ -245,7 +252,7 @@ def normalize_candidates(candidates: list[ClaimCandidate]) -> list[ClaimCandidat
     return sorted(result.values(), key=lambda item: (item.entity, item.property, item.value_type, str(item.value)))
 
 
-def _response_json(response: object) -> object:
+def parse_semantic_response(response: object) -> object:
     if isinstance(response, Mapping):
         return response
     if isinstance(response, str):
@@ -256,11 +263,11 @@ def _response_json(response: object) -> object:
     for attribute in ("output_text", "text", "content"):
         value = getattr(response, attribute, None)
         if value is not None:
-            return _response_json(value)
+            return parse_semantic_response(value)
     choices = getattr(response, "choices", None)
     if choices:
         message = getattr(choices[0], "message", None)
-        return _response_json(getattr(message, "content", message))
+        return parse_semantic_response(getattr(message, "content", message))
     raise ValueError("model response is not structured JSON")
 
 
@@ -271,12 +278,14 @@ class OpenAICompatibleExtractionClient:
         self.api_key = api_key
         self.base_url = base_url.rstrip("/")
 
-    def __call__(self, prompt: str, model: str) -> str:
+    def complete(self, prompt: str, *, model: str) -> str:
         body = json.dumps(
             {
                 "model": model,
                 "messages": [{"role": "user", "content": prompt}],
                 "temperature": 0,
+                "thinking": {"type": "enabled"},
+                "reasoning_effort": "high",
                 "response_format": {"type": "json_object"},
             }
         ).encode("utf-8")
@@ -306,7 +315,12 @@ class OpenAICompatibleExtractionClient:
 class LLMStructuredExtractor:
     """Minimal LLM extractor with safe parsing and deterministic provenance."""
 
-    def __init__(self, client: Callable[..., object], *, model: str = "deepseek-v4-pro") -> None:
+    def __init__(
+        self,
+        client: SemanticModelClient,
+        *,
+        model: str = "deepseek-v4-pro",
+    ) -> None:
         self.client = client
         self.model = model
         self.last_diagnostic: str | None = None
@@ -321,8 +335,8 @@ class LLMStructuredExtractor:
         payload = {
             "tool_name": str(getattr(observation, "tool_name", "")),
             "tool_kind": str(getattr(observation, "tool_kind", "")),
-            "tool_arguments": _strip_forbidden(getattr(observation, "tool_parameters", None)),
-            "tool_result": _strip_forbidden(getattr(observation, "tool_result", None)),
+            "tool_arguments": sanitize_runtime_value(getattr(observation, "tool_parameters", None)),
+            "tool_result": sanitize_runtime_value(getattr(observation, "tool_result", None)),
         }
         hint = context.semantic_hint if context is not None else None
         safe_hint = hint.strip() if isinstance(hint, str) and hint.strip() else None
@@ -350,11 +364,8 @@ class LLMStructuredExtractor:
             return self._fail("observation_failed")
         try:
             prompt = self.build_prompt(observation, context)
-            try:
-                response = self.client(prompt, self.model)
-            except TypeError:
-                response = self.client(prompt)
-            payload = _response_json(response)
+            response = self.client.complete(prompt, model=self.model)
+            payload = parse_semantic_response(response)
             if not isinstance(payload, Mapping) or not isinstance(payload.get("claims"), list):
                 return self._fail("malformed_claim_schema")
             provenance = observation_provenance(observation)
@@ -390,8 +401,11 @@ __all__ = [
     "OpenAICompatibleExtractionClient",
     "Provenance",
     "SemanticExtractor",
+    "SemanticModelClient",
     "normalize_candidate",
     "normalize_candidates",
     "normalize_value",
     "observation_provenance",
+    "parse_semantic_response",
+    "sanitize_runtime_value",
 ]

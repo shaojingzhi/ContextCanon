@@ -11,6 +11,7 @@ from .adapter import (
 )
 from .harness import BridgeDiagnostics, RuntimeMCPBridge
 from .openai_runtime import SPIKE_TOOL_KINDS, build_contextcanon_server_class, official_server_env
+from .runtime_governance import RuntimeGovernance
 
 __all__ = [
     "AgentAbstainAdapter",
@@ -22,6 +23,7 @@ __all__ = [
     "LegacyRuleExtractor",
     "BridgeDiagnostics",
     "RuntimeMCPBridge",
+    "RuntimeGovernance",
     "SPIKE_TOOL_KINDS",
     "build_contextcanon_server_class",
     "official_server_env",

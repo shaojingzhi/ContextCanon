@@ -9,8 +9,9 @@ The boundary is:
 
 ```text
 RuntimeObservation -> SemanticExtractor -> ClaimCandidate
-                   -> deterministic normalization -> RuntimeClaim/Evidence
-                   -> deterministic conflict detection and guard
+                   -> deterministic normalization -> EvidenceCandidate
+                   -> semantic alignment/relation recognition
+                   -> deterministic governance transition and guard
 ```
 
 `ClaimCandidate` contains a subject, open-ended semantic dimension, value,

@@ -2,12 +2,21 @@ from __future__ import annotations
 
 import unittest
 
+from contextcanon.core import EvidenceRelation, FactAlignment, TemporalScope
+from contextcanon.governance import (
+    AlignmentResult,
+    FactNeed,
+    GovernanceState,
+    GovernanceStore,
+)
+from contextcanon.semantic import ClaimCandidate, Provenance
 from experiments.agentabstain.adapter import (
     AgentAbstainAdapter,
     GuardDecision,
     RuntimeObservation,
 )
 from experiments.agentabstain.harness import RuntimeMCPBridge
+from experiments.agentabstain.runtime_governance import RuntimeGovernance
 
 
 class FakeMCP:
@@ -26,6 +35,115 @@ class ErrorMCP(FakeMCP):
 
 
 class HarnessBridgeTests(unittest.IsolatedAsyncioTestCase):
+    async def test_generic_runtime_blocks_when_fact_need_extraction_fails(self) -> None:
+        class EmptyExtractor:
+            def extract(self, observation, context=None):
+                return []
+
+        class FailedNeedExtractor:
+            last_failed = True
+
+            def extract_for_action(self, action):
+                return []
+
+        fake = FakeMCP()
+        governance = RuntimeGovernance(
+            extractor=EmptyExtractor(),
+            fact_need_extractor=FailedNeedExtractor(),
+            store=GovernanceStore(),
+        )
+        bridge = RuntimeMCPBridge(
+            fake.call_tool,
+            {"message.send": "commit"},
+            condition="guard",
+            governance=governance,
+        )
+        result = await bridge.call_tool("message.send", {"text": "status update"})
+        self.assertEqual(fake.calls, [])
+        self.assertIn("Clarification is required", result["structuredContent"]["message"])
+
+    async def test_generic_runtime_ingests_governs_and_blocks_action(self) -> None:
+        class Extractor:
+            def extract(self, observation, context=None):
+                dimensions = (
+                    "scheduled date",
+                    "the day on which the workshop takes place",
+                )
+                return [ClaimCandidate(
+                    entity="Community workshop",
+                    property=dimensions[observation.call_index],
+                    value=observation.tool_result["date"],
+                    value_type="date",
+                    role="OBSERVED",
+                    confidence=0.95,
+                    provenance=Provenance(
+                        f"observation-{observation.call_index}",
+                        observation.tool_name,
+                        observation.tool_parameters,
+                        "date",
+                        observation.tool_result["date"],
+                    ),
+                    temporal_scope=TemporalScope.CURRENT.value,
+                )]
+
+        class Aligner:
+            def align(self, incoming, existing_fact):
+                return AlignmentResult(FactAlignment.SAME_FACT, 0.95)
+
+        class Classifier:
+            def classify(self, incoming, existing):
+                return EvidenceRelation.CONFLICTING
+
+        class NeedExtractor:
+            def extract_for_action(self, action):
+                return [FactNeed(
+                    "Community workshop",
+                    "scheduled date",
+                    "date",
+                    TemporalScope.CURRENT,
+                )]
+
+        responses = iter((
+            {"result": {"date": "2026-04-10"}},
+            {"result": {"date": "2026-04-11"}},
+        ))
+
+        async def call_tool(name: str, arguments: dict) -> dict:
+            if name == "message.send":
+                self.fail("blocked commit must not reach the runtime")
+            return next(responses)
+
+        governance = RuntimeGovernance(
+            extractor=Extractor(),
+            fact_need_extractor=NeedExtractor(),
+            store=GovernanceStore(
+                aligner=Aligner(),
+                relation_classifier=Classifier(),
+            ),
+        )
+        bridge = RuntimeMCPBridge(
+            call_tool,
+            {"source.a": "lookup", "source.b": "verify", "message.send": "commit"},
+            condition="guard",
+            governance=governance,
+        )
+        await bridge.call_tool("source.a", {})
+        await bridge.call_tool("source.b", {})
+        result = await bridge.call_tool("message.send", {"text": "Workshop is April 10"})
+
+        self.assertEqual(governance.store.facts[0].state, GovernanceState.DIVERGED)
+        self.assertEqual(bridge.diagnostics.conflicts_detected, 1)
+        self.assertFalse(bridge.diagnostics.commit_dispatched)
+        self.assertEqual(
+            bridge.diagnostics.guard_decision,
+            GuardDecision.REQUIRE_CLARIFICATION.value,
+        )
+        self.assertIn("Clarification is required", result["structuredContent"]["message"])
+        rendered = bridge.governed_evidence()
+        self.assertIn("State: DIVERGED", rendered)
+        self.assertIn("2026-04-10", rendered)
+        self.assertIn("source.a", rendered)
+
     async def test_lookup_and_verify_results_are_forwarded(self) -> None:
         fake = FakeMCP()
         bridge = RuntimeMCPBridge(

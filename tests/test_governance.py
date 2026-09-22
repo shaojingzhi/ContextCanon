@@ -14,11 +14,15 @@ from contextcanon.core import (
 )
 from contextcanon.governance import (
     ActionGovernanceDecision,
+    ActionRequest,
     AlignmentResult,
     EvidenceCandidate,
     FactDescriptor,
     FactNeed,
     GovernanceStore,
+    LLMEvidenceAligner,
+    LLMFactNeedExtractor,
+    LLMRelationClassifier,
 )
 
 
@@ -28,6 +32,7 @@ def _evidence(
     *,
     scope: TemporalScope = TemporalScope.CURRENT,
     verified: bool | None = True,
+    valid_from: str | None = None,
     valid_until: str | None = None,
 ) -> Evidence:
     return Evidence(
@@ -39,6 +44,7 @@ def _evidence(
         verified=verified,
         temporal_scope=scope,
         confidence=0.95,
+        valid_from=valid_from,
         valid_until=valid_until,
     )
 
@@ -52,6 +58,7 @@ def _candidate(
     dimension: str = "the date when the event takes place",
     scope: TemporalScope = TemporalScope.CURRENT,
     verified: bool | None = True,
+    valid_from: str | None = None,
     valid_until: str | None = None,
 ) -> EvidenceCandidate:
     fact = FactDescriptor(subject, dimension, scope)
@@ -63,14 +70,89 @@ def _candidate(
             source,
             scope=scope,
             verified=verified,
+            valid_from=valid_from,
             valid_until=valid_until,
         ),
     )
 
 
+class ConflictClassifier:
+    def classify(self, incoming, existing):
+        return EvidenceRelation.CONFLICTING
+
+
+class CompatibleClassifier:
+    def classify(self, incoming, existing):
+        return EvidenceRelation.COMPATIBLE
+
+
+class FakeSemanticClient:
+    def __init__(self, responses):
+        self.responses = iter(responses)
+        self.prompts: list[str] = []
+
+    def complete(self, prompt: str, *, model: str):
+        self.prompts.append(prompt)
+        return next(self.responses)
+
+
+class MutableClock:
+    def __init__(self, current: datetime):
+        self.current = current
+
+    def __call__(self) -> datetime:
+        return self.current
+
+
 class OpenWorldGovernanceTests(unittest.TestCase):
+    def test_llm_fact_need_extractor_returns_ephemeral_fact_need(self) -> None:
+        client = FakeSemanticClient([{"needs": [{
+            "subject_hint": "Spring Gala",
+            "semantic_dimension": "the date when the event takes place",
+            "expected_value_type": "date",
+            "temporal_scope": "CURRENT",
+            "required": True,
+        }]}])
+        extractor = LLMFactNeedExtractor(client)
+        needs = extractor.extract_for_action(ActionRequest(
+            "messages.send",
+            {
+                "text": "Spring Gala will take place on March 22",
+                "gold_answer": "must-not-leak",
+            },
+        ))
+        self.assertEqual(len(needs), 1)
+        self.assertEqual(needs[0].subject_hint, "Spring Gala")
+        self.assertNotIn("gold_answer", client.prompts[0])
+        self.assertNotIn("must-not-leak", client.prompts[0])
+
+    def test_llm_aligner_handles_semantic_paraphrases(self) -> None:
+        client = FakeSemanticClient([
+            {"relation": "SAME_FACT", "confidence": 0.94},
+        ])
+        aligner = LLMEvidenceAligner(client)
+        incoming = _candidate(
+            "e2", "calendar-b", "2026-03-23",
+            dimension="the day on which the event takes place",
+        )
+        existing = FactDescriptor(
+            "Spring Gala", "scheduled date", TemporalScope.CURRENT
+        )
+        result = aligner.align(incoming, existing)
+        self.assertEqual(result.relation, FactAlignment.SAME_FACT)
+
+    def test_llm_aligner_low_confidence_is_unknown(self) -> None:
+        client = FakeSemanticClient([
+            {"relation": "SAME_FACT", "confidence": 0.4},
+        ])
+        result = LLMEvidenceAligner(client).align(
+            _candidate("e2", "source-b", "two"),
+            FactDescriptor("Spring Gala", "scheduled date", TemporalScope.CURRENT),
+        )
+        self.assertEqual(result.relation, FactAlignment.UNKNOWN)
+
     def test_conflicting_evidence_diverges_without_business_schema(self) -> None:
-        store = GovernanceStore()
+        store = GovernanceStore(relation_classifier=ConflictClassifier())
         store.ingest(_candidate("e1", "calendar-a", "2026-03-22"))
         governed = store.ingest(_candidate("e2", "calendar-b", "2026-03-23"))
 
@@ -104,6 +186,53 @@ class OpenWorldGovernanceTests(unittest.TestCase):
             {GovernanceState.RESOLVED},
         )
 
+    def test_different_values_are_not_deterministically_conflicting(self) -> None:
+        store = GovernanceStore()
+        first = _candidate(
+            "python", "service-doc-a", "Python",
+            subject="Example service",
+            dimension="supported programming languages",
+        )
+        second = _candidate(
+            "java", "service-doc-b", "Java",
+            subject="Example service",
+            dimension="supported programming languages",
+        )
+        store.ingest(first)
+        governed = store.ingest(second)
+        self.assertEqual(governed.state, GovernanceState.AMBIGUOUS)
+        self.assertNotEqual(governed.state, GovernanceState.DIVERGED)
+
+    def test_llm_relation_classifier_can_mark_values_compatible(self) -> None:
+        client = FakeSemanticClient([
+            {"relation": "COMPATIBLE", "confidence": 0.93},
+        ])
+        classifier = LLMRelationClassifier(client)
+        relation = classifier.classify(
+            _candidate("java", "service-doc-b", "Java"),
+            _candidate("python", "service-doc-a", "Python"),
+        )
+        self.assertEqual(relation, EvidenceRelation.COMPATIBLE)
+
+    def test_llm_relation_classifier_low_confidence_is_unknown(self) -> None:
+        client = FakeSemanticClient([
+            {"relation": "CONFLICTING", "confidence": 0.3},
+        ])
+        relation = LLMRelationClassifier(client).classify(
+            _candidate("e2", "calendar-b", "2026-03-23"),
+            _candidate("e1", "calendar-a", "2026-03-22"),
+        )
+        self.assertEqual(relation, EvidenceRelation.UNKNOWN)
+
+    def test_llm_relation_classifier_recognizes_true_conflict(self) -> None:
+        client = FakeSemanticClient([
+            {"relation": "CONFLICTING", "confidence": 0.96},
+        ])
+        store = GovernanceStore(relation_classifier=LLMRelationClassifier(client))
+        store.ingest(_candidate("e1", "calendar-a", "2026-03-22"))
+        governed = store.ingest(_candidate("e2", "calendar-b", "2026-03-23"))
+        self.assertEqual(governed.state, GovernanceState.DIVERGED)
+
     def test_new_evidence_can_supersede_old_evidence(self) -> None:
         store = GovernanceStore()
         old = _candidate(
@@ -121,7 +250,10 @@ class OpenWorldGovernanceTests(unittest.TestCase):
             dimension="when the maintenance window ends",
         )
         governed = store.ingest(old)
-        store.ingest(new, relation=EvidenceRelation.SUPERSEDING)
+        store.ingest(
+            new,
+            relation_overrides={"old": EvidenceRelation.SUPERSEDING},
+        )
 
         self.assertEqual(governed.records[0].superseded_by, "new")
         self.assertEqual(governed.state, GovernanceState.RESOLVED)
@@ -133,8 +265,53 @@ class OpenWorldGovernanceTests(unittest.TestCase):
         self.assertIsNotNone(result)
         self.assertEqual(result.candidate_values, ("23:30",))
 
+    def test_llm_relation_classifier_can_supersede_old_evidence(self) -> None:
+        client = FakeSemanticClient([
+            {"relation": "SUPERSEDING", "confidence": 0.97},
+        ])
+        store = GovernanceStore(relation_classifier=LLMRelationClassifier(client))
+        old = _candidate(
+            "old", "notice-v1", "22:00",
+            subject="Service maintenance",
+            dimension="when the maintenance window ends",
+        )
+        new = _candidate(
+            "new", "notice-v2", "23:30",
+            subject="Service maintenance",
+            dimension="when the maintenance window ends",
+        )
+        governed = store.ingest(old)
+        store.ingest(new)
+        self.assertEqual(governed.records[0].superseded_by, "new")
+        self.assertEqual(governed.state, GovernanceState.RESOLVED)
+
+    def test_superseding_override_is_pairwise(self) -> None:
+        store = GovernanceStore(relation_classifier=CompatibleClassifier())
+        for identifier, value in (("a", "22:00"), ("b", "22:15"), ("c", "22:30")):
+            store.ingest(_candidate(
+                identifier,
+                f"notice-{identifier}",
+                value,
+                subject="Service maintenance",
+                dimension="when the maintenance window ends",
+            ))
+        store.ingest(
+            _candidate(
+                "new", "updated-notice", "23:30",
+                subject="Service maintenance",
+                dimension="when the maintenance window ends",
+            ),
+            relation_overrides={"a": EvidenceRelation.SUPERSEDING},
+        )
+        records = store.facts[0].records
+        self.assertEqual(records[0].superseded_by, "new")
+        self.assertIsNone(records[1].superseded_by)
+        self.assertIsNone(records[2].superseded_by)
+
     def test_expired_evidence_becomes_stale_deterministically(self) -> None:
-        store = GovernanceStore(now=datetime(2026, 3, 23, tzinfo=timezone.utc))
+        store = GovernanceStore(
+            clock=MutableClock(datetime(2026, 3, 23, tzinfo=timezone.utc))
+        )
         governed = store.ingest(_candidate(
             "expired",
             "status-page",
@@ -152,8 +329,47 @@ class OpenWorldGovernanceTests(unittest.TestCase):
         self.assertIsNotNone(result)
         self.assertEqual(result.state, GovernanceState.STALE)
 
+    def test_clock_advancement_changes_active_evidence_to_stale(self) -> None:
+        clock = MutableClock(datetime(2026, 3, 22, 12, tzinfo=timezone.utc))
+        store = GovernanceStore(clock=clock)
+        governed = store.ingest(_candidate(
+            "window", "status-page", "available",
+            subject="Example service",
+            dimension="current availability",
+            valid_until="2026-03-22T13:00:00Z",
+        ))
+        self.assertEqual(governed.state, GovernanceState.RESOLVED)
+        clock.current = datetime(2026, 3, 22, 14, tzinfo=timezone.utc)
+        result = store.query(FactNeed(
+            "Example service", "current availability",
+            temporal_scope=TemporalScope.CURRENT,
+        ))
+        self.assertEqual(result.state, GovernanceState.STALE)
+
+    def test_future_valid_from_is_not_active_today(self) -> None:
+        clock = MutableClock(datetime(2026, 3, 22, 12, tzinfo=timezone.utc))
+        store = GovernanceStore(clock=clock)
+        governed = store.ingest(_candidate(
+            "future", "release-plan", "enabled",
+            subject="Example feature",
+            dimension="current availability",
+            valid_from="2026-03-23T00:00:00Z",
+        ))
+        self.assertEqual(governed.state, GovernanceState.STALE)
+
+    def test_verified_is_orthogonal_to_resolved_state(self) -> None:
+        candidate = _candidate(
+            "unverified", "runtime-observation", "available",
+            subject="Example service",
+            dimension="current availability",
+            verified=None,
+        )
+        governed = GovernanceStore().ingest(candidate)
+        self.assertEqual(governed.state, GovernanceState.RESOLVED)
+        self.assertIsNone(governed.records[0].evidence.verified)
+
     def test_query_exposes_conflicting_values_and_sources(self) -> None:
-        store = GovernanceStore()
+        store = GovernanceStore(relation_classifier=ConflictClassifier())
         store.ingest(_candidate("e1", "calendar-a", "2026-03-22"))
         store.ingest(_candidate("e2", "calendar-b", "2026-03-23"))
 
@@ -169,7 +385,7 @@ class OpenWorldGovernanceTests(unittest.TestCase):
         self.assertEqual(result.sources, ("calendar-a", "calendar-b"))
 
     def test_protected_action_uses_the_same_governance_state(self) -> None:
-        store = GovernanceStore()
+        store = GovernanceStore(relation_classifier=ConflictClassifier())
         store.ingest(_candidate("e1", "calendar-a", "2026-03-22"))
         store.ingest(_candidate("e2", "calendar-b", "2026-03-23"))
         need = FactNeed(
@@ -193,7 +409,10 @@ class OpenWorldGovernanceTests(unittest.TestCase):
                     return AlignmentResult(FactAlignment.SAME_FACT, 0.9)
                 return AlignmentResult(FactAlignment.UNRELATED, 1.0)
 
-        store = GovernanceStore(aligner=ParaphraseAligner())
+        store = GovernanceStore(
+            aligner=ParaphraseAligner(),
+            relation_classifier=ConflictClassifier(),
+        )
         first = _candidate(
             "e1", "calendar-a", "2026-03-22",
             dimension="scheduled date",
@@ -223,7 +442,7 @@ class OpenWorldGovernanceTests(unittest.TestCase):
         store.ingest(_candidate("e1", "source-a", "one"))
         governed = store.ingest(
             _candidate("e2", "source-b", "two"),
-            relation=EvidenceRelation.UNKNOWN,
+            relation_overrides={"e1": EvidenceRelation.UNKNOWN},
         )
         self.assertEqual(governed.state, GovernanceState.AMBIGUOUS)
 

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import re
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import StrEnum
@@ -19,6 +20,16 @@ from .core import (
     SourceType,
     TemporalScope,
 )
+from .semantic import (
+    SemanticModelClient,
+    parse_semantic_response,
+    sanitize_runtime_value,
+)
+
+
+_MIN_SEMANTIC_CONFIDENCE = 0.7
+_ALIGNMENT_CANDIDATE_LIMIT = 8
+_RELATION_CANDIDATE_LIMIT = 8
 
 
 def _semantic_text(value: str) -> str:
@@ -72,6 +83,19 @@ class FactNeed:
 
 
 ActionDependency = FactNeed
+
+
+@dataclass(frozen=True, slots=True)
+class ActionRequest:
+    tool_name: str
+    arguments: JSONValue
+    tool_description: str | None = None
+    context: JSONValue = None
+
+
+class FactNeedExtractor(Protocol):
+    def extract_for_action(self, action: ActionRequest) -> list[FactNeed]:
+        ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -139,8 +163,81 @@ class ExactFactAligner:
         return AlignmentResult(FactAlignment.RELATED_BUT_DISTINCT, 1.0)
 
 
+def _fact_payload(fact: FactDescriptor) -> dict[str, JSONValue]:
+    return {
+        "subject": fact.subject,
+        "semantic_dimension": fact.semantic_dimension,
+        "temporal_scope": fact.temporal_scope.value if fact.temporal_scope else None,
+    }
+
+
+def _evidence_payload(candidate: EvidenceCandidate) -> dict[str, JSONValue]:
+    evidence = candidate.evidence
+    return {
+        "fact": _fact_payload(candidate.fact),
+        "value": candidate.value,
+        "source": evidence.source_id,
+        "role": evidence.role.value,
+        "observed_at": evidence.observed_at,
+        "valid_from": evidence.valid_from,
+        "valid_until": evidence.valid_until,
+    }
+
+
+class LLMEvidenceAligner:
+    """Narrow semantic same-fact classifier with conservative failure behavior."""
+
+    def __init__(
+        self,
+        client: SemanticModelClient,
+        *,
+        model: str = "deepseek-v4-pro",
+        minimum_confidence: float = _MIN_SEMANTIC_CONFIDENCE,
+    ) -> None:
+        self.client = client
+        self.model = model
+        self.minimum_confidence = minimum_confidence
+        self.diagnostics: list[str] = []
+
+    def align(
+        self,
+        incoming: EvidenceCandidate,
+        existing_fact: FactDescriptor,
+    ) -> AlignmentResult:
+        prompt = (
+            "Decide only whether these descriptors refer to the same real-world fact in "
+            "the same relevant temporal scope. Do not choose which source is true and do "
+            "not make an action decision. Return JSON with relation and confidence. "
+            "relation must be SAME_FACT, RELATED_BUT_DISTINCT, UNRELATED, or UNKNOWN.\n"
+            + json.dumps(
+                {
+                    "incoming": _fact_payload(incoming.fact),
+                    "existing": _fact_payload(existing_fact),
+                },
+                ensure_ascii=False,
+                sort_keys=True,
+            )
+        )
+        try:
+            payload = parse_semantic_response(
+                self.client.complete(prompt, model=self.model)
+            )
+            if not isinstance(payload, Mapping):
+                raise ValueError("alignment response must be an object")
+            relation = FactAlignment(str(payload.get("relation", "UNKNOWN")).upper())
+            confidence = float(payload.get("confidence", 0.0))
+            if not 0.0 <= confidence <= 1.0:
+                raise ValueError("alignment confidence is out of range")
+            if confidence < self.minimum_confidence:
+                return AlignmentResult(FactAlignment.UNKNOWN, confidence)
+            return AlignmentResult(relation, confidence)
+        except Exception as exc:
+            self.diagnostics.append(f"alignment_error:{type(exc).__name__}")
+            return AlignmentResult(FactAlignment.UNKNOWN, 0.0)
+
+
 class DeterministicRelationClassifier:
-    """Compare normalized values only after evidence has aligned to one fact."""
+    """Safe fallback that recognizes support but never invents a conflict."""
 
     def classify(
         self,
@@ -151,7 +248,132 @@ class DeterministicRelationClassifier:
             return EvidenceRelation.SUPPORTING
         if incoming.fact.temporal_scope != existing.fact.temporal_scope:
             return EvidenceRelation.COMPATIBLE
-        return EvidenceRelation.CONFLICTING
+        return EvidenceRelation.UNKNOWN
+
+
+class LLMRelationClassifier:
+    """Classify evidence semantics without selecting truth or governance state."""
+
+    def __init__(
+        self,
+        client: SemanticModelClient,
+        *,
+        model: str = "deepseek-v4-pro",
+        minimum_confidence: float = _MIN_SEMANTIC_CONFIDENCE,
+    ) -> None:
+        self.client = client
+        self.model = model
+        self.minimum_confidence = minimum_confidence
+        self.diagnostics: list[str] = []
+
+    def classify(
+        self,
+        incoming: EvidenceCandidate,
+        existing: EvidenceCandidate,
+    ) -> EvidenceRelation:
+        if _value_key(incoming.value) == _value_key(existing.value):
+            return EvidenceRelation.SUPPORTING
+        prompt = (
+            "Classify only the semantic relation between two evidence items already aligned "
+            "to one fact. Do not choose truth, set governance state, or authorize an action. "
+            "Return JSON with relation and confidence. relation must be SUPPORTING, "
+            "EQUIVALENT, CONFLICTING, SUPERSEDING, COMPATIBLE, or UNKNOWN.\n"
+            + json.dumps(
+                {
+                    "existing": _evidence_payload(existing),
+                    "incoming": _evidence_payload(incoming),
+                },
+                ensure_ascii=False,
+                sort_keys=True,
+            )
+        )
+        try:
+            payload = parse_semantic_response(
+                self.client.complete(prompt, model=self.model)
+            )
+            if not isinstance(payload, Mapping):
+                raise ValueError("relation response must be an object")
+            relation = EvidenceRelation(str(payload.get("relation", "UNKNOWN")).upper())
+            confidence = float(payload.get("confidence", 0.0))
+            if not 0.0 <= confidence <= 1.0:
+                raise ValueError("relation confidence is out of range")
+            if confidence < self.minimum_confidence:
+                return EvidenceRelation.UNKNOWN
+            return relation
+        except Exception as exc:
+            self.diagnostics.append(f"relation_error:{type(exc).__name__}")
+            return EvidenceRelation.UNKNOWN
+
+
+class LLMFactNeedExtractor:
+    """Extract ephemeral FactNeed values from runtime-visible action details."""
+
+    def __init__(
+        self,
+        client: SemanticModelClient,
+        *,
+        model: str = "deepseek-v4-pro",
+    ) -> None:
+        self.client = client
+        self.model = model
+        self.diagnostics: list[str] = []
+        self.last_failed = False
+
+    def extract_for_action(self, action: ActionRequest) -> list[FactNeed]:
+        self.last_failed = False
+        payload = {
+            "tool_name": action.tool_name,
+            "tool_description": action.tool_description,
+            "arguments": sanitize_runtime_value(action.arguments),
+            "context": sanitize_runtime_value(action.context),
+        }
+        prompt = (
+            "Extract factual dependencies required to safely execute this proposed action. "
+            "Return JSON with a needs array. Each need contains subject_hint, "
+            "semantic_dimension, expected_value_type or null, temporal_scope or null, and "
+            "required. Do not output ALLOW, BLOCK, or any governance state. Return an empty "
+            "array when the action has no factual dependency.\n"
+            + json.dumps(payload, ensure_ascii=False, sort_keys=True)
+        )
+        try:
+            result = parse_semantic_response(
+                self.client.complete(prompt, model=self.model)
+            )
+            if not isinstance(result, Mapping) or not isinstance(result.get("needs"), list):
+                raise ValueError("fact need response must contain a needs array")
+            needs: list[FactNeed] = []
+            for item in result["needs"]:
+                if not isinstance(item, Mapping):
+                    continue
+                subject = item.get("subject_hint")
+                dimension = item.get("semantic_dimension")
+                if not isinstance(subject, str) or not subject.strip():
+                    continue
+                if not isinstance(dimension, str) or not dimension.strip():
+                    continue
+                raw_scope = item.get("temporal_scope")
+                scope = None if raw_scope is None else TemporalScope(str(raw_scope).upper())
+                expected_type = item.get("expected_value_type")
+                if expected_type is not None and not isinstance(expected_type, str):
+                    continue
+                required = item.get("required", True)
+                if not isinstance(required, bool):
+                    continue
+                needs.append(FactNeed(
+                    subject.strip(),
+                    re.sub(r"\s+", " ", dimension.strip()),
+                    expected_type,
+                    scope,
+                    required,
+                ))
+            if result["needs"] and not needs:
+                self.diagnostics.append("fact_need_error:no_acceptable_needs")
+                self.last_failed = True
+            return needs
+        except Exception as exc:
+            self.diagnostics.append(f"fact_need_error:{type(exc).__name__}")
+            self.last_failed = True
+            return []
 
 
 @dataclass(frozen=True, slots=True)
@@ -207,18 +429,26 @@ class GovernanceStore:
         *,
         aligner: EvidenceAligner | None = None,
         relation_classifier: RelationClassifier | None = None,
-        now: datetime | None = None,
+        clock: Callable[[], datetime] | None = None,
+        alignment_candidate_limit: int = _ALIGNMENT_CANDIDATE_LIMIT,
+        relation_candidate_limit: int = _RELATION_CANDIDATE_LIMIT,
     ) -> None:
         self.aligner = aligner or ExactFactAligner()
         self.relation_classifier = relation_classifier or DeterministicRelationClassifier()
-        self.now = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+        self.clock = clock or (lambda: datetime.now(timezone.utc))
+        if alignment_candidate_limit < 1:
+            raise ValueError("alignment_candidate_limit must be positive")
+        if relation_candidate_limit < 1:
+            raise ValueError("relation_candidate_limit must be positive")
+        self.alignment_candidate_limit = alignment_candidate_limit
+        self.relation_candidate_limit = relation_candidate_limit
         self.facts: list[GovernedFact] = []
 
     def ingest(
         self,
         candidate: EvidenceCandidate,
         *,
-        relation: EvidenceRelation | None = None,
+        relation_overrides: Mapping[str, EvidenceRelation] | None = None,
     ) -> GovernedFact:
         governed = self._find_same_fact(candidate)
         if governed is None:
@@ -227,12 +457,14 @@ class GovernanceStore:
 
         active_existing = [
             record for record in governed.records
-            if record.superseded_by is None and not self._expired(record.evidence)
-        ]
+            if record.superseded_by is None and self._freshness(record.evidence) is True
+        ][-self.relation_candidate_limit :]
+        overrides = relation_overrides or {}
         relations = tuple(
             EvidenceRelationRecord(
                 record.evidence.id,
-                relation or self.relation_classifier.classify(candidate, record.candidate),
+                overrides.get(record.evidence.id)
+                or self.relation_classifier.classify(candidate, record.candidate),
             )
             for record in active_existing
         )
@@ -271,12 +503,16 @@ class GovernanceStore:
             ),
         )
         matches = [
-            governed for governed in self.facts
+            governed for governed in self._alignment_candidates(candidate.fact)
             if self.aligner.align(candidate, governed.fact).relation is FactAlignment.SAME_FACT
         ]
         if len(matches) != 1:
             return None
-        governed = matches[0]
+        return self.result_for(matches[0])
+
+    def result_for(self, governed: GovernedFact) -> QueryGovernanceResult:
+        """Render one stored fact without another semantic alignment call."""
+
         self._recompute(governed)
         unsuperseded = [
             record for record in governed.records
@@ -284,7 +520,7 @@ class GovernanceStore:
         ]
         active = [
             record for record in unsuperseded
-            if not self._expired(record.evidence)
+            if self._freshness(record.evidence) is True
         ]
         records = active or unsuperseded
         values_by_key = {
@@ -322,27 +558,66 @@ class GovernanceStore:
 
     def _find_same_fact(self, candidate: EvidenceCandidate) -> GovernedFact | None:
         matches = [
-            governed for governed in self.facts
+            governed for governed in self._alignment_candidates(candidate.fact)
             if self.aligner.align(candidate, governed.fact).relation is FactAlignment.SAME_FACT
         ]
         return matches[0] if len(matches) == 1 else None
 
-    def _expired(self, evidence: Evidence) -> bool:
+    def _alignment_candidates(
+        self,
+        fact: FactDescriptor,
+    ) -> list[GovernedFact]:
+        subject_tokens = set(_semantic_text(fact.subject).split())
+        candidates = [
+            governed
+            for governed in reversed(self.facts)
+            if subject_tokens & set(_semantic_text(governed.fact.subject).split())
+        ]
+        return candidates[: self.alignment_candidate_limit]
+
+    def _now(self) -> datetime:
+        current = self.clock()
+        if current.tzinfo is None:
+            return current.replace(tzinfo=timezone.utc)
+        return current.astimezone(timezone.utc)
+
+    def _freshness(self, evidence: Evidence) -> bool | None:
+        valid_from = _parse_time(evidence.valid_from)
         valid_until = _parse_time(evidence.valid_until)
-        return valid_until is not None and valid_until < self.now
+        if evidence.valid_from is not None and valid_from is None:
+            return None
+        if evidence.valid_until is not None and valid_until is None:
+            return None
+        now = self._now()
+        if valid_from is not None and now < valid_from:
+            return False
+        if valid_until is not None and now > valid_until:
+            return False
+        return True
 
     def _recompute(self, governed: GovernedFact) -> None:
         unsuperseded = [
             record for record in governed.records if record.superseded_by is None
         ]
-        active = [record for record in unsuperseded if not self._expired(record.evidence)]
+        active = [
+            record
+            for record in unsuperseded
+            if self._freshness(record.evidence) is True
+        ]
         if not active:
-            governed.state = (
-                GovernanceState.STALE if unsuperseded else GovernanceState.SUPERSEDED
-            )
+            if not unsuperseded:
+                governed.state = GovernanceState.SUPERSEDED
+            elif any(self._freshness(record.evidence) is None for record in unsuperseded):
+                governed.state = GovernanceState.AMBIGUOUS
+            else:
+                governed.state = GovernanceState.STALE
             return
+        active_ids = {record.evidence.id for record in active}
         relations = {
-            item.relation for record in active for item in record.relations
+            item.relation
+            for record in active
+            for item in record.relations
+            if item.existing_evidence_id in active_ids
         }
         if EvidenceRelation.UNKNOWN in relations:
             governed.state = GovernanceState.AMBIGUOUS
@@ -350,15 +625,13 @@ class GovernanceStore:
         if EvidenceRelation.CONFLICTING in relations:
             governed.state = GovernanceState.DIVERGED
             return
-        if any(record.evidence.verified is True for record in active):
-            governed.state = GovernanceState.RESOLVED
-            return
-        governed.state = GovernanceState.UNVERIFIED
+        governed.state = GovernanceState.RESOLVED
 
 __all__ = [
     "ActionDependency",
     "ActionGovernanceDecision",
     "ActionGovernanceResult",
+    "ActionRequest",
     "AlignmentResult",
     "DeterministicRelationClassifier",
     "EvidenceAligner",
@@ -367,9 +640,13 @@ __all__ = [
     "ExactFactAligner",
     "FactDescriptor",
     "FactNeed",
+    "FactNeedExtractor",
     "GovernanceRecord",
     "GovernanceStore",
     "GovernedFact",
+    "LLMEvidenceAligner",
+    "LLMFactNeedExtractor",
+    "LLMRelationClassifier",
     "QueryGovernanceResult",
     "RelationClassifier",
 ]

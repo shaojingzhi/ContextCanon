@@ -10,10 +10,17 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from contextcanon.governance import (
+    GovernanceStore,
+    LLMEvidenceAligner,
+    LLMFactNeedExtractor,
+    LLMRelationClassifier,
+)
 from contextcanon.semantic import LLMStructuredExtractor, OpenAICompatibleExtractionClient
 
 from .adapter import AgentAbstainAdapter
 from .openai_runtime import build_contextcanon_server_class, official_server_env
+from .runtime_governance import RuntimeGovernance
 
 TASKS = ("preview_008", "preview_013", "preview_015")
 SIDES = ("act", "abstain")
@@ -118,19 +125,39 @@ async def run_one(args: argparse.Namespace, task: str, side: str) -> dict[str, A
     bundle = BaseAgent.load_task_bundle("conflicting_evidence", task, side)
     artifact_dir = agent.build_artifact_dir(bundle.category, bundle.task_id, bundle.task_type)
     server_type = build_contextcanon_server_class(args.agentabstain_repo)
-    extractor = None
+    adapter = AgentAbstainAdapter() if args.extractor == "legacy" else None
+    governance = None
     if args.extractor == "llm":
         api_key = os.environ.get("DEEPSEEK_API_KEY") or os.environ["OPENAI_API_KEY"]
-        extraction_client = OpenAICompatibleExtractionClient(
+        semantic_client = OpenAICompatibleExtractionClient(
             api_key,
             base_url=os.environ.get("OPENAI_BASE_URL", "https://api.deepseek.com"),
         )
-        extractor = LLMStructuredExtractor(extraction_client, model=args.model)
+        extractor = LLMStructuredExtractor(semantic_client, model=args.model)
+        aligner = LLMEvidenceAligner(semantic_client, model=args.model)
+        relation_classifier = LLMRelationClassifier(
+            semantic_client,
+            model=args.model,
+        )
+        fact_need_extractor = LLMFactNeedExtractor(
+            semantic_client,
+            model=args.model,
+        )
+        governance = RuntimeGovernance(
+            extractor=extractor,
+            fact_need_extractor=fact_need_extractor,
+            store=GovernanceStore(
+                aligner=aligner,
+                relation_classifier=relation_classifier,
+            ),
+            action_context=bundle.task_yaml["instruction"],
+        )
     server = server_type(
         name="task_env",
         params={"command": sys.executable, "args": build_server_args(bundle), "cwd": str(args.agentabstain_repo), "env": official_server_env()},
         tool_filter={"blocked_tool_names": [export_name]},
-        adapter=AgentAbstainAdapter(extractor=extractor),
+        adapter=adapter,
+        governance=governance,
         condition=args.condition,
     )
     final_output = None
@@ -179,6 +206,9 @@ async def run_one(args: argparse.Namespace, task: str, side: str) -> dict[str, A
         "reasoning_effort": "high",
         "condition": args.condition,
         "semantic_extractor": args.extractor,
+        "semantic_aligner": "llm" if governance is not None else "legacy-exact",
+        "relation_classifier": "llm" if governance is not None else "legacy-rules",
+        "fact_need_extractor": "llm" if governance is not None else "legacy-map",
         "contextcanon": True,
         "commit_attempted": server.contextcanon_bridge.diagnostics.commit_attempted,
         "commit_dispatched": server.contextcanon_bridge.diagnostics.commit_dispatched,
@@ -211,7 +241,9 @@ async def run_one(args: argparse.Namespace, task: str, side: str) -> dict[str, A
         ],
         "diagnostics": server.contextcanon_bridge.diagnostics.to_dict(),
         "extraction_diagnostics": list(
-            server.contextcanon_bridge.adapter.extraction_diagnostics
+            server.contextcanon_bridge.governance.diagnostics
+            if server.contextcanon_bridge.governance is not None
+            else server.contextcanon_bridge.adapter.extraction_diagnostics
         ),
     }
 

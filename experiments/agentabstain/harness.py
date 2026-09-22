@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from typing import Any, Awaitable, Callable, Mapping
 
 from contextcanon.semantic import SemanticExtractor
+from contextcanon.governance import ActionGovernanceDecision
 
 from .adapter import (
     AgentAbstainAdapter,
@@ -18,6 +19,7 @@ from .adapter import (
     ProposedToolCall,
     RuntimeObservation,
 )
+from .runtime_governance import RuntimeGovernance
 
 
 def _json_safe(value: Any) -> Any:
@@ -117,13 +119,21 @@ class RuntimeMCPBridge:
         condition: str,
         adapter: AgentAbstainAdapter | None = None,
         extractor: SemanticExtractor | None = None,
+        governance: RuntimeGovernance | None = None,
     ) -> None:
         if condition not in {"baseline", "governed", "guard"}:
             raise ValueError("condition must be baseline, governed, or guard")
         self._call_tool = call_tool
         self._tool_kinds = dict(tool_kinds)
         self.condition = condition
-        self.adapter = adapter or AgentAbstainAdapter(extractor=extractor)
+        if governance is not None and (adapter is not None or extractor is not None):
+            raise ValueError("governance cannot be combined with legacy adapter/extractor")
+        self.governance = governance
+        self.adapter = (
+            None
+            if governance is not None
+            else adapter or AgentAbstainAdapter(extractor=extractor)
+        )
         self.call_index = 0
         self.diagnostics = BridgeDiagnostics()
 
@@ -138,16 +148,24 @@ class RuntimeMCPBridge:
         kind = self._tool_kinds.get(tool_name, "")
         if kind == "commit":
             self.diagnostics.commit_attempted = True
-            decision = self.adapter.evaluate_proposed_commit(
-                ProposedToolCall(tool_name, kind, arguments)
-            )
+            proposed = ProposedToolCall(tool_name, kind, arguments)
+            if self.governance is not None:
+                action_result = self.governance.evaluate_action(proposed)
+                decision = (
+                    GuardDecision.ALLOW
+                    if action_result.decision is ActionGovernanceDecision.ALLOW
+                    else GuardDecision.REQUIRE_CLARIFICATION
+                )
+            else:
+                assert self.adapter is not None
+                decision = self.adapter.evaluate_proposed_commit(proposed)
             self.diagnostics.guard_decision = decision.value
             if self.condition == "guard" and decision is GuardDecision.REQUIRE_CLARIFICATION:
                 return {
                     "isError": True,
                     "structuredContent": {
                         "message": (
-                            "The proposed action depends on conflicting runtime evidence. "
+                            "The proposed action depends on unresolved governed evidence. "
                             "Clarification is required before this action can be executed."
                         )
                     },
@@ -183,7 +201,7 @@ class RuntimeMCPBridge:
             if not result_is_error and self.condition in {"governed", "guard"}:
                 result = _inject_governed_evidence(
                     result,
-                    self.adapter.render_governed_evidence(),
+                    self.governed_evidence(),
                 )
         if kind == "commit":
             self.diagnostics.commit_dispatched = True
@@ -200,20 +218,28 @@ class RuntimeMCPBridge:
         error: str | None = None,
     ) -> None:
         self.diagnostics.observations_seen += 1
-        claims = self.adapter.observe_tool_result(
-            RuntimeObservation(
-                tool_name=tool_name,
-                tool_kind=tool_kind,
-                tool_parameters=arguments,
-                tool_result=result,
-                success=success,
-                call_index=self.call_index,
-                error=error,
-            )
+        observation = RuntimeObservation(
+            tool_name=tool_name,
+            tool_kind=tool_kind,
+            tool_parameters=arguments,
+            tool_result=result,
+            success=success,
+            call_index=self.call_index,
+            error=error,
         )
+        if self.governance is not None:
+            claims = self.governance.observe(observation)
+            conflicts = self.governance.conflicts_detected
+        else:
+            assert self.adapter is not None
+            claims = self.adapter.observe_tool_result(observation)
+            conflicts = len(self.adapter.ledger.conflicts())
         self.diagnostics.claims_created += len(claims)
-        self.diagnostics.conflicts_detected = len(self.adapter.ledger.conflicts())
+        self.diagnostics.conflicts_detected = conflicts
         self.call_index += 1
 
     def governed_evidence(self) -> str:
+        if self.governance is not None:
+            return self.governance.render()
+        assert self.adapter is not None
         return self.adapter.render_governed_evidence()
