@@ -4,6 +4,7 @@ import json
 import unittest
 from unittest import mock
 
+from contextcanon.core import TemporalScope
 from contextcanon.semantic import (
     ClaimCandidate,
     ExtractionContext,
@@ -20,7 +21,7 @@ def _provenance() -> Provenance:
 
 
 class SemanticExtractionTests(unittest.TestCase):
-    def test_paraphrased_dates_normalize_and_conflict_deterministically(self) -> None:
+    def test_dates_normalize_without_forcing_a_semantic_dimension_key(self) -> None:
         responses = iter(
             [
                 json.dumps({"claims": [{
@@ -51,7 +52,8 @@ class SemanticExtractionTests(unittest.TestCase):
         self.assertEqual(first[0].value, "2026-03-22")
         self.assertEqual(second[0].value, "2026-03-23")
         self.assertEqual(first[0].entity, second[0].entity)
-        self.assertEqual(first[0].property, second[0].property)
+        self.assertEqual(first[0].property, "event date")
+        self.assertEqual(second[0].property, "event_date")
         self.assertNotEqual(first[0].value, second[0].value)
 
     def test_paraphrased_status_and_entity_are_supported_without_task_names(self) -> None:
@@ -69,7 +71,7 @@ class SemanticExtractionTests(unittest.TestCase):
         )()
         claims = extractor.extract(observation)
         self.assertEqual(claims[0].entity, "Order W-8855135")
-        self.assertEqual(claims[0].property, "lifecycle_status")
+        self.assertEqual(claims[0].property, "lifecycle status")
         self.assertEqual(claims[0].value, "delivered")
 
     def test_malformed_or_low_confidence_output_fails_safely(self) -> None:
@@ -111,6 +113,52 @@ class SemanticExtractionTests(unittest.TestCase):
         self.assertNotIn("gold_answer", prompt)
         self.assertNotIn("should_act", prompt)
         self.assertNotIn("pair_id=secret", prompt)
+
+    def test_business_metadata_fields_are_not_recursively_deleted(self) -> None:
+        captured: list[str] = []
+        extractor = LLMStructuredExtractor(
+            lambda prompt, model: captured.append(prompt) or {"claims": []}
+        )
+        observation = type(
+            "Observation", (), {
+                "success": True,
+                "tool_name": "catalog.lookup",
+                "tool_kind": "lookup",
+                "tool_parameters": {},
+                "tool_result": {
+                    "record": {
+                        "category": "maintenance",
+                        "metadata": {"owner": "operations"},
+                        "task_id": "business-work-42",
+                    }
+                },
+                "call_index": 0,
+            }
+        )()
+        extractor.extract(observation)
+        prompt = captured[0]
+        self.assertIn('"category": "maintenance"', prompt)
+        self.assertIn('"metadata"', prompt)
+        self.assertIn('"task_id": "business-work-42"', prompt)
+
+    def test_temporal_scope_is_preserved_as_semantic_metadata(self) -> None:
+        extractor = LLMStructuredExtractor(lambda prompt, model: {"claims": [{
+            "entity": "production authentication",
+            "property": "target protocol",
+            "value": "OAuth2",
+            "value_type": "enum",
+            "role": "INTENDED",
+            "confidence": 0.95,
+            "temporal_scope": "future",
+        }]})
+        observation = type(
+            "Observation", (), {
+                "success": True, "tool_name": "adr.read", "tool_kind": "lookup",
+                "tool_parameters": {}, "tool_result": "approved target", "call_index": 0,
+            }
+        )()
+        candidate = extractor.extract(observation)[0]
+        self.assertEqual(candidate.temporal_scope, TemporalScope.FUTURE.value)
 
     def test_provenance_is_runtime_supplied(self) -> None:
         extractor = LLMStructuredExtractor(lambda prompt, model: {"claims": [{
@@ -180,6 +228,11 @@ class SemanticExtractionTests(unittest.TestCase):
         candidate = ClaimCandidate("x", "p", "v", "string", "VERIFIED", 0.9, _provenance())
         self.assertIsNone(normalize_candidate(candidate))
         candidate = ClaimCandidate("x", "p", "v", "currency", "OBSERVED", 0.9, _provenance())
+        self.assertIsNone(normalize_candidate(candidate))
+        candidate = ClaimCandidate(
+            "x", "p", "v", "string", "OBSERVED", 0.9, _provenance(),
+            observed_at=123,  # type: ignore[arg-type]
+        )
         self.assertIsNone(normalize_candidate(candidate))
 
 

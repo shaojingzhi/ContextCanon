@@ -6,17 +6,17 @@ conflict handling remain deterministic in the caller.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import math
 import re
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import datetime
-import hashlib
 from typing import Any, Protocol
 from urllib import error, request
 
-from .core.types import JSONValue
+from .core.types import JSONValue, TemporalScope
 
 
 _VALUE_TYPES = frozenset({"string", "date", "datetime", "boolean", "number", "enum"})
@@ -24,10 +24,10 @@ _ROLES = frozenset({"OBSERVED", "INTENDED", "DOCUMENTED"})
 _MIN_CONFIDENCE = 0.5
 _FORBIDDEN_KEYS = frozenset(
     {
-        "task_type", "pair_id", "category", "abstention_trigger", "contradiction",
+        "task_type", "pair_id", "abstention_trigger", "contradiction",
         "evidence_a", "evidence_b", "why_contradictory", "critical_actions",
         "execution_dag", "must_yield", "reference_actions", "evaluator_outputs",
-        "task_id", "should_act", "should_abstain", "gold_answer", "metadata",
+        "should_act", "should_abstain", "gold_answer",
     }
 )
 
@@ -52,6 +52,10 @@ class ClaimCandidate:
     role: str
     confidence: float
     provenance: Provenance
+    temporal_scope: str | None = None
+    observed_at: str | None = None
+    valid_from: str | None = None
+    valid_until: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -195,20 +199,33 @@ def normalize_candidate(candidate: ClaimCandidate) -> ClaimCandidate | None:
         return None
     if not 0.0 <= float(candidate.confidence) <= 1.0 or float(candidate.confidence) < _MIN_CONFIDENCE:
         return None
+    timestamps = (candidate.observed_at, candidate.valid_from, candidate.valid_until)
+    if any(value is not None and not isinstance(value, str) for value in timestamps):
+        return None
     normalized = normalize_value(candidate.value, value_type)
     if normalized is None:
         return None
     entity = re.sub(r"\s+", " ", candidate.entity.strip())
     entity = re.sub(r"^the\s+", "", entity, flags=re.IGNORECASE)
-    property_name = re.sub(r"[\s-]+", "_", candidate.property.strip().casefold())
+    semantic_dimension = re.sub(r"\s+", " ", candidate.property.strip())
+    temporal_scope = None
+    if candidate.temporal_scope is not None:
+        try:
+            temporal_scope = TemporalScope(str(candidate.temporal_scope).upper()).value
+        except ValueError:
+            return None
     return ClaimCandidate(
         entity=entity,
-        property=property_name,
+        property=semantic_dimension,
         value=normalized,
         value_type=value_type,
         role=role,
         confidence=float(candidate.confidence),
         provenance=candidate.provenance,
+        temporal_scope=temporal_scope,
+        observed_at=candidate.observed_at,
+        valid_from=candidate.valid_from,
+        valid_until=candidate.valid_until,
     )
 
 
@@ -318,7 +335,10 @@ class LLMStructuredExtractor:
             "Return JSON with a claims array. Each claim must contain entity, property, value, "
             "value_type, role, and confidence. Supported value_type values are string, date, "
             "datetime, boolean, number, and enum. Supported roles are OBSERVED, INTENDED, "
-            "and DOCUMENTED. Return an empty claims array when no useful fact is supported."
+            "and DOCUMENTED. temporal_scope may be CURRENT, FUTURE, HISTORICAL, INTERVAL, "
+            "or UNKNOWN. Include observed_at, valid_from, or valid_until only when the "
+            "observation states them explicitly. Return an empty claims array when no useful "
+            "fact is supported."
             + hint_text
             + "\nObservation:\n"
             + json.dumps(payload, ensure_ascii=False, sort_keys=True, indent=2)
@@ -345,7 +365,16 @@ class LLMStructuredExtractor:
                 required = ("entity", "property", "value", "value_type", "role", "confidence")
                 if any(key not in item for key in required):
                     continue
-                candidates.append(ClaimCandidate(provenance=provenance, **{key: item[key] for key in required}))
+                optional = {
+                    key: item[key]
+                    for key in ("temporal_scope", "observed_at", "valid_from", "valid_until")
+                    if key in item
+                }
+                candidates.append(ClaimCandidate(
+                    provenance=provenance,
+                    **{key: item[key] for key in required},
+                    **optional,
+                ))
             normalized = normalize_candidates(candidates)
             if not normalized and payload["claims"]:
                 return self._fail("no_acceptable_claims")

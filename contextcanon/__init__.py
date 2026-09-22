@@ -1,5 +1,18 @@
 """ContextCanon compiles conflicting knowledge into verifiable context."""
 
+from .governance import (
+    ActionDependency,
+    ActionGovernanceDecision,
+    ActionGovernanceResult,
+    AlignmentResult,
+    EvidenceAligner,
+    EvidenceCandidate,
+    FactDescriptor,
+    FactNeed,
+    GovernanceStore,
+    QueryGovernanceResult,
+    RelationClassifier,
+)
 from .semantic import (
     ClaimCandidate,
     ExtractionContext,
@@ -16,4 +29,15 @@ __all__ = [
     "OpenAICompatibleExtractionClient",
     "Provenance",
     "SemanticExtractor",
+    "ActionDependency",
+    "ActionGovernanceDecision",
+    "ActionGovernanceResult",
+    "AlignmentResult",
+    "EvidenceAligner",
+    "EvidenceCandidate",
+    "FactDescriptor",
+    "FactNeed",
+    "GovernanceStore",
+    "QueryGovernanceResult",
+    "RelationClassifier",
 ]

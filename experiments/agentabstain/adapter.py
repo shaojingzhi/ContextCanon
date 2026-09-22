@@ -14,7 +14,7 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Iterable
 
-from contextcanon.core import Evidence, EvidenceRole, SourceType
+from contextcanon.core import Evidence, EvidenceRole, SourceType, TemporalScope
 from contextcanon.semantic import (
     ClaimCandidate,
     ExtractionContext,
@@ -345,6 +345,7 @@ class LegacyRuleExtractor:
                     location=location,
                     excerpt=_text(observation.tool_result),
                 ),
+                temporal_scope=TemporalScope.CURRENT.value,
             )
         ]
 
@@ -367,6 +368,21 @@ def _runtime_claim(candidate: ClaimCandidate) -> RuntimeClaim:
         role=role,
         content=candidate.value,
         verified=None,
+        temporal_scope=(
+            TemporalScope(candidate.temporal_scope)
+            if candidate.temporal_scope is not None else None
+        ),
+        confidence=candidate.confidence,
+        observed_at=candidate.observed_at,
+        valid_from=candidate.valid_from,
+        valid_until=candidate.valid_until,
+        observation_id=candidate.provenance.observation_id,
+        provenance={
+            "tool_name": candidate.provenance.tool_name,
+            "tool_arguments": candidate.provenance.tool_arguments,
+            "location": candidate.provenance.location,
+            "excerpt": candidate.provenance.excerpt,
+        },
     )
     value = candidate.value if isinstance(candidate.value, str) else _text(candidate.value)
     return RuntimeClaim(

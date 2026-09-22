@@ -86,6 +86,30 @@ def _extract_usage(run_result: Any) -> dict[str, int] | None:
         return None
 
 
+def _build_persisted_result(
+    builder: Any,
+    *,
+    agent: Any,
+    bundle: Any,
+    artifact_dir: Any,
+    final_output: Any,
+    export_payload: Any,
+    run_error: Any,
+    provider_metadata: dict[str, Any],
+) -> Any:
+    """Keep experiment metadata attached to the official result artifact."""
+
+    return builder(
+        agent=agent,
+        bundle=bundle,
+        artifact_dir=artifact_dir,
+        final_output=final_output,
+        export_payload=export_payload,
+        run_error=run_error,
+        provider_metadata=provider_metadata,
+    )
+
+
 async def run_one(args: argparse.Namespace, task: str, side: str) -> dict[str, Any]:
     (OpenAISDKAgent, Agent, ModelSettings, Runner, _MCPServer, OpenAIProvider, export_name,
      build_server_args, build_result, coerce_output, normalize_export, BaseAgent) = _upstream(args.agentabstain_repo)
@@ -162,10 +186,15 @@ async def run_one(args: argparse.Namespace, task: str, side: str) -> dict[str, A
     }
     if usage is not None:
         metadata["usage"] = usage
-    result = build_result(
-        agent=agent, bundle=bundle, artifact_dir=artifact_dir,
-        final_output=final_output, export_payload=export_payload,
+    result = _build_persisted_result(
+        build_result,
+        agent=agent,
+        bundle=bundle,
+        artifact_dir=artifact_dir,
+        final_output=final_output,
+        export_payload=export_payload,
         run_error=model_error or runtime_export_error,
+        provider_metadata=metadata,
     )
     return {
         "task_id": f"conflicting_evidence/{task}",

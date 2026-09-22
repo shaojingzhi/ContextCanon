@@ -55,3 +55,44 @@ class SourceType(StrEnum):
     SOURCE_CODE = "SOURCE_CODE"
     TEST = "TEST"
     OTHER = "OTHER"
+
+
+class TemporalScope(StrEnum):
+    """Small temporal vocabulary used to keep current and intended facts apart."""
+
+    CURRENT = "CURRENT"
+    FUTURE = "FUTURE"
+    HISTORICAL = "HISTORICAL"
+    INTERVAL = "INTERVAL"
+    UNKNOWN = "UNKNOWN"
+
+
+class FactAlignment(StrEnum):
+    """How confidently an incoming observation refers to an existing fact."""
+
+    SAME_FACT = "SAME_FACT"
+    RELATED_BUT_DISTINCT = "RELATED_BUT_DISTINCT"
+    UNRELATED = "UNRELATED"
+    UNKNOWN = "UNKNOWN"
+
+
+class EvidenceRelation(StrEnum):
+    """Semantic relation proposed for two evidence items."""
+
+    SUPPORTING = "SUPPORTING"
+    EQUIVALENT = "EQUIVALENT"
+    CONFLICTING = "CONFLICTING"
+    SUPERSEDING = "SUPERSEDING"
+    COMPATIBLE = "COMPATIBLE"
+    UNKNOWN = "UNKNOWN"
+
+
+class GovernanceState(StrEnum):
+    """Deterministic state exposed to query and action consumers."""
+
+    RESOLVED = "RESOLVED"
+    DIVERGED = "DIVERGED"
+    STALE = "STALE"
+    AMBIGUOUS = "AMBIGUOUS"
+    UNVERIFIED = "UNVERIFIED"
+    SUPERSEDED = "SUPERSEDED"

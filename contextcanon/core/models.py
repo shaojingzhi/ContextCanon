@@ -18,6 +18,7 @@ from .types import (
     ReasonCode,
     ResolutionStatus,
     SourceType,
+    TemporalScope,
 )
 
 
@@ -74,13 +75,41 @@ class Evidence:
     timestamp: str | None = None
     verifier: str | None = None
     verified: bool | None = None
+    temporal_scope: TemporalScope | None = None
+    confidence: float | None = None
+    observed_at: str | None = None
+    valid_from: str | None = None
+    valid_until: str | None = None
+    observation_id: str | None = None
+    provenance: JSONValue = None
 
     def __post_init__(self) -> None:
         _require_enum(self.source_type, SourceType, field_name="source_type")
         _require_enum(self.role, EvidenceRole, field_name="role")
+        if self.temporal_scope is not None:
+            _require_enum(
+                self.temporal_scope,
+                TemporalScope,
+                field_name="temporal_scope",
+            )
         self.content = _canonical_json_value(self.content, field_name="content")
         if self.timestamp is not None and not isinstance(self.timestamp, str):
             raise TypeError("timestamp must be an ISO-8601 string or None")
+        if self.confidence is not None and not 0.0 <= self.confidence <= 1.0:
+            raise ValueError("confidence must be between 0.0 and 1.0")
+        for name in ("observed_at", "valid_from", "valid_until"):
+            value = getattr(self, name)
+            if value is not None and not isinstance(value, str):
+                raise TypeError(f"{name} must be an ISO-8601 string or None")
+        if self.observation_id is not None and not isinstance(
+            self.observation_id,
+            str,
+        ):
+            raise TypeError("observation_id must be a string or None")
+        self.provenance = _canonical_json_value(
+            self.provenance,
+            field_name="provenance",
+        )
 
     def to_dict(self) -> dict[str, JSONValue]:
         return {
@@ -93,6 +122,18 @@ class Evidence:
             "timestamp": self.timestamp,
             "verifier": self.verifier,
             "verified": self.verified,
+            "temporal_scope": (
+                self.temporal_scope.value if self.temporal_scope else None
+            ),
+            "confidence": self.confidence,
+            "observed_at": self.observed_at,
+            "valid_from": self.valid_from,
+            "valid_until": self.valid_until,
+            "observation_id": self.observation_id,
+            "provenance": _canonical_json_value(
+                self.provenance,
+                field_name="provenance",
+            ),
         }
 
 

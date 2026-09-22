@@ -13,6 +13,7 @@ from contextcanon.core import (
     Resolution,
     ResolutionStatus,
     SourceType,
+    TemporalScope,
 )
 
 
@@ -170,6 +171,26 @@ class ModelSerializationTests(unittest.TestCase):
                 role=EvidenceRole.OBSERVED,
                 timestamp=object(),  # type: ignore[arg-type]
             )
+
+    def test_evidence_serializes_open_world_governance_metadata(self) -> None:
+        evidence = Evidence(
+            id="runtime-1",
+            source_id="tool.lookup",
+            source_type=SourceType.OTHER,
+            location="result",
+            role=EvidenceRole.OBSERVED,
+            temporal_scope=TemporalScope.CURRENT,
+            confidence=0.9,
+            observed_at="2026-03-22T10:00:00Z",
+            valid_until="2026-03-23T10:00:00Z",
+            observation_id="observation-1",
+            provenance={"tool_name": "tool.lookup", "location": "result"},
+        )
+        serialized = evidence.to_dict()
+        self.assertEqual(serialized["temporal_scope"], "CURRENT")
+        self.assertEqual(serialized["confidence"], 0.9)
+        self.assertEqual(serialized["observation_id"], "observation-1")
+        self.assertEqual(serialized["provenance"]["tool_name"], "tool.lookup")
 
     def test_resolution_status_belongs_to_context_item(self) -> None:
         resolved_item = ContextItem(

@@ -4,7 +4,11 @@ import unittest
 
 from experiments.agentabstain.openai_runtime import canonical_tool_name, official_server_env
 from experiments.agentabstain.official_gate import validate_gate_result
-from experiments.agentabstain.run_agent import _format_exception, _structured_content
+from experiments.agentabstain.run_agent import (
+    _build_persisted_result,
+    _format_exception,
+    _structured_content,
+)
 
 
 class OpenAIRuntimeTests(unittest.TestCase):
@@ -96,6 +100,34 @@ class OpenAIRuntimeTests(unittest.TestCase):
             _structured_content(Result()),
             {"state": {}, "execution_log": []},
         )
+
+    def test_provider_metadata_is_passed_to_official_result_builder(self) -> None:
+        captured: dict[str, object] = {}
+
+        def builder(**kwargs):
+            captured.update(kwargs)
+            return object()
+
+        metadata = {
+            "model": "deepseek-v4-pro",
+            "provider": "openai-compatible",
+            "condition": "guard",
+            "semantic_extractor": "llm",
+            "usage": {"total_tokens": 42},
+            "commit_attempted": True,
+            "commit_dispatched": False,
+        }
+        _build_persisted_result(
+            builder,
+            agent="agent",
+            bundle="bundle",
+            artifact_dir="artifact",
+            final_output="output",
+            export_payload={},
+            run_error=None,
+            provider_metadata=metadata,
+        )
+        self.assertEqual(captured["provider_metadata"], metadata)
 
 
 if __name__ == "__main__":
