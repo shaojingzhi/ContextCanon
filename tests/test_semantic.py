@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from types import SimpleNamespace
 import unittest
 from unittest import mock
 
@@ -250,21 +251,65 @@ class SemanticExtractionTests(unittest.TestCase):
     def test_client_builds_openai_compatible_json_request(self) -> None:
         client = OpenAICompatibleExtractionClient("secret")
         self.assertEqual(client.base_url, "https://api.deepseek.com")
-        response = mock.MagicMock()
-        response.json.return_value = {"choices": [{"message": {"content": '{"claims": []}'}}]}
-        response.raise_for_status.return_value = None
-        with mock.patch("contextcanon.semantic.httpx.Client") as client_type:
-            client_type.return_value.__enter__.return_value.post.return_value = response
+        response = SimpleNamespace(
+            json=lambda: {"choices": [{"message": {"content": '{"claims": []}'}}]},
+            raise_for_status=lambda: None,
+        )
+
+        class FakeTimeout:
+            def __init__(self, default, **parts):
+                self.default = default
+                for name, value in parts.items():
+                    setattr(self, name, value)
+
+        class FakeClient:
+            init_kwargs = None
+            post_kwargs = None
+
+            def __init__(self, **kwargs):
+                FakeClient.init_kwargs = kwargs
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                return False
+
+            def post(self, url, **kwargs):
+                FakeClient.post_kwargs = {"url": url, **kwargs}
+                return response
+
+        fake_httpx = SimpleNamespace(
+            Client=FakeClient,
+            Timeout=FakeTimeout,
+            HTTPError=RuntimeError,
+        )
+        with mock.patch("contextcanon.semantic.httpx", fake_httpx):
             client.complete("extract facts", model="deepseek-v4-pro")
-        body = json.loads(client_type.return_value.__enter__.return_value.post.call_args.kwargs["content"])
+        body = json.loads(FakeClient.post_kwargs["content"])
         self.assertEqual(body["response_format"], {"type": "json_object"})
         self.assertEqual(body["temperature"], 0)
         self.assertEqual(body["thinking"], {"type": "enabled"})
         self.assertEqual(body["reasoning_effort"], "high")
-        timeout = client_type.call_args.kwargs["timeout"]
+        timeout = FakeClient.init_kwargs["timeout"]
         self.assertEqual(timeout.connect, 60.0)
         self.assertEqual(timeout.read, 60.0)
-        self.assertFalse(client_type.call_args.kwargs["trust_env"])
+        self.assertFalse(FakeClient.init_kwargs["trust_env"])
+        self.assertNotIn("secret", json.dumps(body))
+
+    def test_client_uses_urllib_when_httpx_is_unavailable(self) -> None:
+        client = OpenAICompatibleExtractionClient("secret", timeout=12.0)
+        response = mock.MagicMock()
+        response.__enter__.return_value.read.return_value = json.dumps(
+            {"choices": [{"message": {"content": '{"claims": []}'}}]}
+        ).encode("utf-8")
+        with mock.patch("contextcanon.semantic.httpx", None), mock.patch(
+            "contextcanon.semantic.request.urlopen", return_value=response
+        ) as urlopen:
+            client.complete("extract facts", model="deepseek-v4-pro")
+        body = json.loads(urlopen.call_args.args[0].data)
+        self.assertEqual(body["response_format"], {"type": "json_object"})
+        self.assertEqual(urlopen.call_args.kwargs["timeout"], 12.0)
         self.assertNotIn("secret", json.dumps(body))
 
     def test_client_rejects_non_positive_timeout(self) -> None:
