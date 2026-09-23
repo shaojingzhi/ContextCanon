@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import unittest
+from unittest import mock
 
 from contextcanon.tool_semantics import ToolSemantics
 from experiments.agentabstain.openai_runtime import (
@@ -11,6 +12,7 @@ from experiments.agentabstain.openai_runtime import (
 from experiments.agentabstain.official_gate import validate_gate_result
 from experiments.agentabstain.run_agent import (
     _build_persisted_result,
+    _configure_provider_environment,
     _format_exception,
     _structured_content,
 )
@@ -120,6 +122,20 @@ class OpenAIRuntimeTests(unittest.TestCase):
             _structured_content(Result()),
             {"state": {}, "execution_log": []},
         )
+
+    def test_deepseek_key_overrides_stale_openai_sdk_key_in_memory(self) -> None:
+        import os
+
+        with mock.patch.dict(
+            os.environ,
+            {
+                "DEEPSEEK_API_KEY": "deepseek-test-key",
+                "OPENAI_API_KEY": "stale-proxy-key",
+            },
+            clear=True,
+        ):
+            _configure_provider_environment()
+            self.assertEqual(os.environ["OPENAI_API_KEY"], "deepseek-test-key")
 
     def test_provider_metadata_is_passed_to_official_result_builder(self) -> None:
         captured: dict[str, object] = {}

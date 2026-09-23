@@ -40,6 +40,18 @@ def _format_exception(stage: str, exc: BaseException) -> str:
     return " | ".join(parts)
 
 
+def _configure_provider_environment() -> None:
+    """Use the concrete DeepSeek key for both semantic and Agent SDK clients."""
+
+    deepseek_key = os.environ.get("DEEPSEEK_API_KEY")
+    if deepseek_key:
+        os.environ["OPENAI_API_KEY"] = deepseek_key
+    elif not os.environ.get("OPENAI_API_KEY"):
+        raise SystemExit("Set DEEPSEEK_API_KEY before --run (no key is persisted).")
+    os.environ.setdefault("OPENAI_BASE_URL", "https://api.deepseek.com")
+    os.environ.setdefault("OPENAI_AGENTS_DISABLE_TRACING", "1")
+
+
 def _structured_content(result: Any) -> Any:
     """Read structured MCP content across SDK naming conventions."""
 
@@ -273,12 +285,7 @@ def _validate(args: argparse.Namespace) -> int:
 
 
 async def _run(args: argparse.Namespace) -> int:
-    if not os.environ.get("DEEPSEEK_API_KEY") and not os.environ.get("OPENAI_API_KEY"):
-        raise SystemExit("Set DEEPSEEK_API_KEY before --run (no key is persisted).")
-    os.environ.setdefault("OPENAI_BASE_URL", "https://api.deepseek.com")
-    os.environ.setdefault("OPENAI_AGENTS_DISABLE_TRACING", "1")
-    if "OPENAI_API_KEY" not in os.environ:
-        os.environ["OPENAI_API_KEY"] = os.environ["DEEPSEEK_API_KEY"]
+    _configure_provider_environment()
     tasks = TASKS if args.task == "all" else (args.task,)
     sides = SIDES if args.side == "all" else (args.side,)
     results = [await run_one(args, task, side) for task in tasks for side in sides]
