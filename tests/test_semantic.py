@@ -289,8 +289,9 @@ class SemanticExtractionTests(unittest.TestCase):
         body = json.loads(FakeClient.post_kwargs["content"])
         self.assertEqual(body["response_format"], {"type": "json_object"})
         self.assertEqual(body["temperature"], 0)
-        self.assertEqual(body["thinking"], {"type": "enabled"})
-        self.assertEqual(body["reasoning_effort"], "high")
+        self.assertNotIn("thinking", body)
+        self.assertNotIn("reasoning_effort", body)
+        self.assertEqual(body["max_tokens"], 256)
         timeout = FakeClient.init_kwargs["timeout"]
         self.assertEqual(timeout.connect, 60.0)
         self.assertEqual(timeout.read, 60.0)

@@ -18,6 +18,7 @@ from contextcanon.governance import (
     GovernanceStore,
 )
 from contextcanon.semantic import ClaimCandidate, SemanticExtractor, normalize_candidate
+from contextcanon.semantic_budget import SemanticBudget
 
 from .adapter import ProposedToolCall, RuntimeObservation
 
@@ -80,6 +81,8 @@ class RuntimeGovernance:
     fact_need_extractor: FactNeedExtractor
     store: GovernanceStore
     action_context: object = None
+    budget: SemanticBudget | None = None
+    tool_semantics_resolver: object | None = None
     observations: list[RuntimeObservation] = field(default_factory=list)
 
     def observe(self, observation: RuntimeObservation) -> list[EvidenceCandidate]:
@@ -95,6 +98,8 @@ class RuntimeGovernance:
         return ingested
 
     def evaluate_action(self, proposed: ProposedToolCall) -> ActionGovernanceResult:
+        if self.budget is not None and self.budget.governance_incomplete:
+            return ActionGovernanceResult(ActionGovernanceDecision.REQUIRE_CLARIFICATION)
         extraction = self.fact_need_extractor.extract_for_action(ActionRequest(
             proposed.tool_name,
             proposed.parameters,
@@ -113,6 +118,21 @@ class RuntimeGovernance:
         return ActionGovernanceResult(
             ActionGovernanceDecision.REQUIRE_CLARIFICATION
         )
+
+    @property
+    def metrics(self) -> dict[str, object]:
+        metrics: dict[str, object] = {}
+        if self.budget is not None:
+            metrics.update(self.budget.diagnostics())
+        for name, component in (
+            ("fast_path_alignment_hits", self.store.aligner),
+            ("alignment_candidates_considered", self.store.aligner),
+            ("fast_path_relation_hits", self.store.relation_classifier),
+            ("tool_semantics_cache_hits", getattr(self, "tool_semantics_resolver", None)),
+        ):
+            if component is not None and hasattr(component, name):
+                metrics[name] = getattr(component, name)
+        return metrics
 
     def render(self) -> str:
         lines = ["Governed runtime evidence:"]

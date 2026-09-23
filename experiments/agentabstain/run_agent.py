@@ -7,6 +7,7 @@ import asyncio
 import json
 import os
 import sys
+from time import monotonic
 from pathlib import Path
 from typing import Any
 
@@ -16,7 +17,12 @@ from contextcanon.governance import (
     LLMFactNeedExtractor,
     LLMRelationClassifier,
 )
-from contextcanon.semantic import LLMStructuredExtractor, OpenAICompatibleExtractionClient
+from contextcanon.semantic import (
+    LLMStructuredExtractor,
+    OpenAICompatibleExtractionClient,
+    SemanticInferenceConfig,
+)
+from contextcanon.semantic_budget import BudgetedSemanticClient, SemanticBudget
 from contextcanon.tool_semantics import LLMToolSemanticsResolver
 
 from .adapter import AgentAbstainAdapter
@@ -131,6 +137,7 @@ def _build_persisted_result(
 
 
 async def run_one(args: argparse.Namespace, task: str, side: str) -> dict[str, Any]:
+    task_started = monotonic()
     (OpenAISDKAgent, Agent, ModelSettings, Runner, _MCPServer, OpenAIProvider, export_name,
      build_server_args, build_result, coerce_output, normalize_export, BaseAgent) = _upstream(args.agentabstain_repo)
     agent = OpenAISDKAgent(args.model, 0.0, args.max_turns, args.results_root)
@@ -141,24 +148,36 @@ async def run_one(args: argparse.Namespace, task: str, side: str) -> dict[str, A
     adapter = AgentAbstainAdapter() if args.extractor == "legacy" else None
     governance = None
     tool_semantics_resolver = None
+    budget = None
     if args.extractor == "llm":
         api_key = os.environ.get("DEEPSEEK_API_KEY") or os.environ["OPENAI_API_KEY"]
+        budget = SemanticBudget(
+            max_requests=args.semantic_max_requests,
+            max_total_seconds=args.semantic_max_total_seconds,
+            per_request_deadline_seconds=args.semantic_request_deadline_seconds,
+        )
         semantic_client = OpenAICompatibleExtractionClient(
             api_key,
             base_url=os.environ.get("OPENAI_BASE_URL", "https://api.deepseek.com"),
+            timeout=args.semantic_request_deadline_seconds,
+            inference=SemanticInferenceConfig(max_output_tokens=args.semantic_max_output_tokens),
         )
-        extractor = LLMStructuredExtractor(semantic_client, model=args.model)
-        aligner = LLMEvidenceAligner(semantic_client, model=args.model)
+        extractor = LLMStructuredExtractor(
+            BudgetedSemanticClient(semantic_client, budget, "extraction"), model=args.model
+        )
+        aligner = LLMEvidenceAligner(
+            BudgetedSemanticClient(semantic_client, budget, "alignment"), model=args.model
+        )
         relation_classifier = LLMRelationClassifier(
-            semantic_client,
+            BudgetedSemanticClient(semantic_client, budget, "relation"),
             model=args.model,
         )
         fact_need_extractor = LLMFactNeedExtractor(
-            semantic_client,
+            BudgetedSemanticClient(semantic_client, budget, "fact_need"),
             model=args.model,
         )
         tool_semantics_resolver = LLMToolSemanticsResolver(
-            semantic_client,
+            BudgetedSemanticClient(semantic_client, budget, "tool_semantics"),
             model=args.model,
         )
         governance = RuntimeGovernance(
@@ -169,6 +188,8 @@ async def run_one(args: argparse.Namespace, task: str, side: str) -> dict[str, A
                 relation_classifier=relation_classifier,
             ),
             action_context=bundle.task_yaml["instruction"],
+            budget=budget,
+            tool_semantics_resolver=tool_semantics_resolver,
         )
     server = server_type(
         name="task_env",
@@ -233,7 +254,27 @@ async def run_one(args: argparse.Namespace, task: str, side: str) -> dict[str, A
         "commit_attempted": server.contextcanon_bridge.diagnostics.commit_attempted,
         "commit_dispatched": server.contextcanon_bridge.diagnostics.commit_dispatched,
         "tracing": "disabled",
+        "semantic_profile": {
+            "thinking": None,
+            "reasoning_effort": None,
+            "max_output_tokens": args.semantic_max_output_tokens,
+        },
+        "task_wall_time_ms": round((monotonic() - task_started) * 1000),
     }
+    if governance is not None:
+        metadata["semantic_diagnostics"] = governance.metrics
+        metadata["semantic_diagnostics"]["fast_path_alignment_hits"] = getattr(
+            governance.store.aligner, "fast_path_hits", 0
+        )
+        metadata["semantic_diagnostics"]["fast_path_relation_hits"] = getattr(
+            governance.store.relation_classifier, "fast_path_hits", 0
+        )
+        metadata["semantic_diagnostics"]["tool_semantics_cache_hits"] = getattr(
+            tool_semantics_resolver, "cache_hits", 0
+        )
+        metadata["semantic_diagnostics"]["tool_semantics_cache_misses"] = getattr(
+            tool_semantics_resolver, "cache_misses", 0
+        )
     if usage is not None:
         metadata["usage"] = usage
     result = _build_persisted_result(
@@ -305,6 +346,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--max-turns", type=int, default=30)
     parser.add_argument("--results-root", default="experiments/agentabstain/results")
     parser.add_argument("--run", action="store_true", help="required before making model/API calls")
+    parser.add_argument("--semantic-max-requests", type=int, default=12)
+    parser.add_argument("--semantic-max-total-seconds", type=float, default=30.0)
+    parser.add_argument("--semantic-request-deadline-seconds", type=float, default=5.0)
+    parser.add_argument("--semantic-max-output-tokens", type=int, default=256)
     args = parser.parse_args(argv)
     os.environ["AGENTABSTAIN_DATA"] = str(Path(args.agentabstain_data).expanduser())
     if not args.run:

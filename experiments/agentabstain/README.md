@@ -78,6 +78,13 @@ the static AgentAbstain mapping remains compatibility-only. These model calls
 recognize semantics; `GovernanceStore` owns freshness, evidence lifecycle,
 state transitions, query output, and deterministic action enforcement.
 
+M8.3 adds a task-local semantic budget and deterministic first paths. The fast
+semantic profile sends JSON mode, temperature zero, and a bounded `max_tokens`
+value; it omits DeepSeek thinking and `reasoning_effort` parameters. Exact
+normalized fact identities and equal values are handled without a model call,
+tool semantics are cached for the runtime, and a whole-operation deadline marks
+governance incomplete. Any side-effect proposal then requires clarification.
+
 Alignment candidate selection is lexical-first with a bounded recent-fact
 fallback when subject words do not overlap. This permits semantic paraphrase
 alignment without an unbounded history scan. Runtime evidence rendering still

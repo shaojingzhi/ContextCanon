@@ -210,12 +210,18 @@ class LLMEvidenceAligner:
         self.model = model
         self.minimum_confidence = minimum_confidence
         self.diagnostics: list[str] = []
+        self.fast_path_hits = 0
+        self.alignment_candidates_considered = 0
 
     def align(
         self,
         incoming: EvidenceCandidate,
         existing_fact: FactDescriptor,
     ) -> AlignmentResult:
+        deterministic = ExactFactAligner().align(incoming, existing_fact)
+        if deterministic.relation is FactAlignment.SAME_FACT:
+            self.fast_path_hits += 1
+            return deterministic
         prompt = (
             "Decide only whether these descriptors refer to the same real-world fact in "
             "the same relevant temporal scope. Do not choose which source is true and do "
@@ -277,6 +283,7 @@ class LLMRelationClassifier:
         self.model = model
         self.minimum_confidence = minimum_confidence
         self.diagnostics: list[str] = []
+        self.fast_path_hits = 0
 
     def classify(
         self,
@@ -284,7 +291,16 @@ class LLMRelationClassifier:
         existing: EvidenceCandidate,
     ) -> EvidenceRelation:
         if _value_key(incoming.value) == _value_key(existing.value):
+            self.fast_path_hits += 1
             return EvidenceRelation.SUPPORTING
+        known_scopes = {None, TemporalScope.UNKNOWN}
+        if (
+            incoming.fact.temporal_scope != existing.fact.temporal_scope
+            and incoming.fact.temporal_scope not in known_scopes
+            and existing.fact.temporal_scope not in known_scopes
+        ):
+            self.fast_path_hits += 1
+            return EvidenceRelation.COMPATIBLE
         prompt = (
             "Classify only the semantic relation between two evidence items already aligned "
             "to one fact. Do not choose truth, set governance state, or authorize an action. "
@@ -583,8 +599,11 @@ class GovernanceStore:
         return ActionGovernanceResult(ActionGovernanceDecision.ALLOW)
 
     def _find_same_fact(self, candidate: EvidenceCandidate) -> GovernedFact | None:
+        candidates = self._alignment_candidates(candidate.fact)
+        if hasattr(self.aligner, "alignment_candidates_considered"):
+            self.aligner.alignment_candidates_considered += len(candidates)  # type: ignore[attr-defined]
         matches = [
-            governed for governed in self._alignment_candidates(candidate.fact)
+            governed for governed in candidates
             if self.aligner.align(candidate, governed.fact).relation is FactAlignment.SAME_FACT
         ]
         return matches[0] if len(matches) == 1 else None

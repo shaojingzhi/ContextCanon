@@ -36,7 +36,9 @@ from .semantic import (
     Provenance,
     SemanticExtractor,
     SemanticModelClient,
+    SemanticInferenceConfig,
 )
+from .semantic_budget import BudgetedSemanticClient, SemanticBudget, SemanticDeadlineExceeded
 
 __all__ = [
     "ClaimCandidate",
@@ -46,6 +48,10 @@ __all__ = [
     "Provenance",
     "SemanticExtractor",
     "SemanticModelClient",
+    "SemanticInferenceConfig",
+    "BudgetedSemanticClient",
+    "SemanticBudget",
+    "SemanticDeadlineExceeded",
     "ActionDependency",
     "ActionGovernanceDecision",
     "ActionGovernanceResult",

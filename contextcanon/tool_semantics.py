@@ -80,6 +80,23 @@ class LLMToolSemanticsResolver:
         self.model = model
         self.minimum_confidence = minimum_confidence
         self.diagnostics: list[str] = []
+        self._cache: dict[str, ToolSemantics] = {}
+        self.cache_hits = 0
+        self.cache_misses = 0
+
+    @staticmethod
+    def _cache_key(
+        tool_name: str,
+        description: str | None,
+        input_schema: JSONValue,
+        annotations: JSONValue,
+    ) -> str:
+        return json.dumps(
+            [tool_name, description, input_schema, annotations],
+            ensure_ascii=True,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
 
     def classify(
         self,
@@ -92,6 +109,11 @@ class LLMToolSemanticsResolver:
         explicit = _annotation_semantics(annotations)
         if explicit is not None:
             return explicit
+        key = self._cache_key(tool_name, description, input_schema, annotations)
+        if key in self._cache:
+            self.cache_hits += 1
+            return self._cache[key]
+        self.cache_misses += 1
         prompt = (
             "Classify only the operational semantics of this tool. Return JSON with "
             "semantics and confidence. semantics must be READ, VERIFY, SIDE_EFFECT, or "
@@ -120,11 +142,12 @@ class LLMToolSemanticsResolver:
             confidence = float(payload.get("confidence", 0.0))
             if not 0.0 <= confidence <= 1.0:
                 raise ValueError("tool semantics confidence is out of range")
-            if confidence < self.minimum_confidence:
-                return ToolSemantics.UNKNOWN
-            return semantics
+            result = ToolSemantics.UNKNOWN if confidence < self.minimum_confidence else semantics
+            self._cache[key] = result
+            return result
         except Exception as exc:
             self.diagnostics.append(f"tool_semantics_error:{type(exc).__name__}")
+            self._cache[key] = ToolSemantics.UNKNOWN
             return ToolSemantics.UNKNOWN
 
 

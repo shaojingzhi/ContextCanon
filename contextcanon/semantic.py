@@ -84,6 +84,19 @@ class SemanticModelClient(Protocol):
         ...
 
 
+@dataclass(frozen=True, slots=True)
+class SemanticInferenceConfig:
+    """Low-cost provider settings for governance, separate from the Agent model."""
+
+    max_output_tokens: int | None = 256
+    thinking: bool | None = None
+    reasoning_effort: str | None = None
+
+    def __post_init__(self) -> None:
+        if self.max_output_tokens is not None and self.max_output_tokens <= 0:
+            raise ValueError("max_output_tokens must be positive or None")
+
+
 def _json_safe(value: object) -> JSONValue:
     if value is None or isinstance(value, (str, bool, int)):
         return value
@@ -285,24 +298,29 @@ class OpenAICompatibleExtractionClient:
         *,
         base_url: str = "https://api.deepseek.com",
         timeout: float = 60.0,
+        inference: SemanticInferenceConfig | None = None,
     ) -> None:
         if timeout <= 0:
             raise ValueError("timeout must be positive")
         self.api_key = api_key
         self.base_url = base_url.rstrip("/")
         self.timeout = timeout
+        self.inference = inference or SemanticInferenceConfig()
 
     def complete(self, prompt: str, *, model: str) -> str:
-        body = json.dumps(
-            {
-                "model": model,
-                "messages": [{"role": "user", "content": prompt}],
-                "temperature": 0,
-                "thinking": {"type": "enabled"},
-                "reasoning_effort": "high",
-                "response_format": {"type": "json_object"},
-            }
-        ).encode("utf-8")
+        payload: dict[str, object] = {
+            "model": model,
+            "messages": [{"role": "user", "content": prompt}],
+            "temperature": 0,
+            "response_format": {"type": "json_object"},
+        }
+        if self.inference.max_output_tokens is not None:
+            payload["max_tokens"] = self.inference.max_output_tokens
+        if self.inference.thinking is not None:
+            payload["thinking"] = {"type": "enabled" if self.inference.thinking else "disabled"}
+        if self.inference.reasoning_effort is not None:
+            payload["reasoning_effort"] = self.inference.reasoning_effort
+        body = json.dumps(payload).encode("utf-8")
         url = f"{self.base_url}/chat/completions"
         headers = {
             "Authorization": f"Bearer {self.api_key}",
@@ -436,6 +454,7 @@ __all__ = [
     "OpenAICompatibleExtractionClient",
     "Provenance",
     "SemanticExtractor",
+    "SemanticInferenceConfig",
     "SemanticModelClient",
     "normalize_candidate",
     "normalize_candidates",
