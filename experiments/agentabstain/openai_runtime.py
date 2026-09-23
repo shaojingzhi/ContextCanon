@@ -156,7 +156,7 @@ def build_contextcanon_server_class(agentabstain_repo: str | Path):
                 tool_name, getattr(self, "_encoded_to_original", {})
             )
             metadata = self._contextcanon_tool_metadata.get(canonical_name, {})
-            return await self._contextcanon_bridge.call_tool(
+            result = await self._contextcanon_bridge.call_tool(
                 canonical_name,
                 arguments,
                 meta=meta,
@@ -164,6 +164,19 @@ def build_contextcanon_server_class(agentabstain_repo: str | Path):
                 input_schema=metadata.get("input_schema"),
                 annotations=metadata.get("annotations"),
             )
+            # The Agents SDK expects an MCP CallToolResult object.  The local
+            # bridge deliberately uses JSON dictionaries for pure unit tests,
+            # so adapt only at this official SDK boundary.
+            if isinstance(result, dict):
+                from mcp.types import CallToolResult
+
+                structured = result.get("structuredContent", result.get("structured_content"))
+                return CallToolResult(
+                    content=[],
+                    structuredContent=structured,
+                    isError=bool(result.get("isError", result.get("is_error", False))),
+                )
+            return result
 
         @property
         def contextcanon_bridge(self) -> RuntimeMCPBridge:

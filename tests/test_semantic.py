@@ -251,17 +251,20 @@ class SemanticExtractionTests(unittest.TestCase):
         client = OpenAICompatibleExtractionClient("secret")
         self.assertEqual(client.base_url, "https://api.deepseek.com")
         response = mock.MagicMock()
-        response.__enter__.return_value.read.return_value = json.dumps(
-            {"choices": [{"message": {"content": '{"claims": []}'}}]}
-        ).encode("utf-8")
-        with mock.patch("contextcanon.semantic.request.urlopen", return_value=response) as urlopen:
+        response.json.return_value = {"choices": [{"message": {"content": '{"claims": []}'}}]}
+        response.raise_for_status.return_value = None
+        with mock.patch("contextcanon.semantic.httpx.Client") as client_type:
+            client_type.return_value.__enter__.return_value.post.return_value = response
             client.complete("extract facts", model="deepseek-v4-pro")
-        body = json.loads(urlopen.call_args.args[0].data)
+        body = json.loads(client_type.return_value.__enter__.return_value.post.call_args.kwargs["content"])
         self.assertEqual(body["response_format"], {"type": "json_object"})
         self.assertEqual(body["temperature"], 0)
         self.assertEqual(body["thinking"], {"type": "enabled"})
         self.assertEqual(body["reasoning_effort"], "high")
-        self.assertEqual(urlopen.call_args.kwargs["timeout"], 60.0)
+        timeout = client_type.call_args.kwargs["timeout"]
+        self.assertEqual(timeout.connect, 60.0)
+        self.assertEqual(timeout.read, 60.0)
+        self.assertFalse(client_type.call_args.kwargs["trust_env"])
         self.assertNotIn("secret", json.dumps(body))
 
     def test_client_rejects_non_positive_timeout(self) -> None:

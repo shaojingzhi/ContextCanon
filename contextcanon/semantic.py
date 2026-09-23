@@ -16,6 +16,11 @@ from datetime import datetime
 from typing import Any, Protocol
 from urllib import error, request
 
+try:  # Optional: the AgentAbstain runtime already provides HTTPX.
+    import httpx
+except ImportError:  # pragma: no cover - exercised only in minimal installs.
+    httpx = None  # type: ignore[assignment]
+
 from .core.types import JSONValue, TemporalScope
 
 
@@ -298,20 +303,41 @@ class OpenAICompatibleExtractionClient:
                 "response_format": {"type": "json_object"},
             }
         ).encode("utf-8")
-        call = request.Request(
-            f"{self.base_url}/chat/completions",
-            data=body,
-            headers={
-                "Authorization": f"Bearer {self.api_key}",
-                "Content-Type": "application/json",
-            },
-            method="POST",
-        )
+        url = f"{self.base_url}/chat/completions"
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json",
+        }
         try:
-            with request.urlopen(call, timeout=self.timeout) as response:
-                payload = json.loads(response.read().decode("utf-8"))
-        except (error.HTTPError, error.URLError, TimeoutError, OSError) as exc:
-            raise RuntimeError("semantic extraction provider request failed") from exc
+            if httpx is not None:
+                # HTTPX is also the transport used by the Agent SDK and handles
+                # DeepSeek's TLS endpoint reliably. Keep this optional so the
+                # core package remains dependency-light outside that runtime.
+                timeout = httpx.Timeout(
+                    self.timeout,
+                    connect=self.timeout,
+                    read=self.timeout,
+                    write=self.timeout,
+                    pool=self.timeout,
+                )
+                # The semantic endpoint is supplied explicitly. Do not inherit
+                # ambient proxy configuration: malformed NO_PROXY entries (for
+                # example an IPv6 loopback entry) can make HTTPX reject a valid
+                # DeepSeek URL before it opens a connection.
+                with httpx.Client(timeout=timeout, trust_env=False) as client:
+                    response = client.post(url, content=body, headers=headers)
+                    response.raise_for_status()
+                    payload = response.json()
+            else:
+                call = request.Request(url, data=body, headers=headers, method="POST")
+                with request.urlopen(call, timeout=self.timeout) as response:
+                    payload = json.loads(response.read().decode("utf-8"))
+        except Exception as exc:
+            if httpx is not None and isinstance(exc, httpx.HTTPError):
+                raise RuntimeError("semantic extraction provider request failed") from exc
+            if httpx is None or isinstance(exc, (error.HTTPError, error.URLError, TimeoutError, OSError)):
+                raise RuntimeError("semantic extraction provider request failed") from exc
+            raise
         try:
             content = payload["choices"][0]["message"]["content"]
         except (KeyError, IndexError, TypeError) as exc:
