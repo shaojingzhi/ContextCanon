@@ -33,14 +33,13 @@ class SemanticBudget:
     time_by_stage_ms: dict[str, int] = field(default_factory=dict)
     requests_by_stage: dict[str, int] = field(default_factory=dict)
     governance_incomplete: bool = False
-    _started_at: float = field(init=False)
+    _started_at: float | None = field(init=False, default=None)
 
     def __post_init__(self) -> None:
         if self.max_requests < 0:
             raise ValueError("max_requests must not be negative")
         if self.max_total_seconds <= 0 or self.per_request_deadline_seconds <= 0:
             raise ValueError("semantic deadlines must be positive")
-        self._started_at = self.clock()
 
     @property
     def remaining_request_budget(self) -> int:
@@ -48,9 +47,13 @@ class SemanticBudget:
 
     @property
     def remaining_time_budget(self) -> float:
+        if self._started_at is None:
+            return self.max_total_seconds
         return max(0.0, self.max_total_seconds - (self.clock() - self._started_at))
 
     def invoke(self, stage: str, operation: Callable[[], T]) -> T:
+        if self._started_at is None:
+            self._started_at = self.clock()
         if self.remaining_request_budget <= 0 or self.remaining_time_budget <= 0:
             self.requests_skipped_budget += 1
             self.governance_incomplete = True
