@@ -86,13 +86,57 @@ class SemanticBudgetTests(unittest.TestCase):
             clock=lambda: now[0],
         )
         client = FakeSemanticClient(["one", "two"])
+        calls: list[str] = []
+        def complete(prompt: str, *, model: str):
+            calls.append(prompt)
+            now[0] += 2.0
+            return "one"
+        client.complete = complete  # type: ignore[method-assign]
         wrapped = BudgetedSemanticClient(client, budget, "extraction")
         self.assertEqual(wrapped.complete("", model="m"), "one")
-        now[0] = 2.1
+        now[0] += 100.0
         with self.assertRaises(SemanticDeadlineExceeded):
             wrapped.complete("", model="m")
-        self.assertEqual(len(client.prompts), 1)
+        self.assertEqual(len(calls), 1)
         self.assertTrue(budget.governance_incomplete)
+
+    def test_idle_time_outside_semantic_operations_does_not_consume_budget(self) -> None:
+        now = [0.0]
+        budget = SemanticBudget(
+            max_requests=3,
+            max_total_seconds=10,
+            per_request_deadline_seconds=5,
+            clock=lambda: now[0],
+        )
+        client = FakeSemanticClient([])
+        def complete(prompt: str, *, model: str):
+            now[0] += 2.0
+            return "ok"
+        client.complete = complete  # type: ignore[method-assign]
+        wrapped = BudgetedSemanticClient(client, budget, "alignment")
+        self.assertEqual(wrapped.complete("", model="m"), "ok")
+        now[0] += 100.0
+        self.assertAlmostEqual(budget.remaining_time_budget, 8.0, places=2)
+        self.assertEqual(wrapped.complete("", model="m"), "ok")
+        self.assertAlmostEqual(budget.remaining_time_budget, 6.0, places=2)
+
+    def test_cumulative_semantic_time_consumes_budget(self) -> None:
+        now = [0.0]
+        budget = SemanticBudget(
+            max_requests=3,
+            max_total_seconds=5,
+            per_request_deadline_seconds=5,
+            clock=lambda: now[0],
+        )
+        client = FakeSemanticClient([])
+        def complete(prompt: str, *, model: str):
+            now[0] += 2.0
+            return "ok"
+        client.complete = complete  # type: ignore[method-assign]
+        wrapped = BudgetedSemanticClient(client, budget, "relation")
+        wrapped.complete("", model="m")
+        wrapped.complete("", model="m")
+        self.assertAlmostEqual(budget.remaining_time_budget, 1.0, places=2)
 
     def test_operation_deadline_returns_control_without_worker(self) -> None:
         budget = SemanticBudget(max_requests=1, max_total_seconds=2, per_request_deadline_seconds=0.05)
@@ -109,6 +153,21 @@ class SemanticBudgetTests(unittest.TestCase):
         self.assertLess(time.monotonic() - started, 0.5)
         self.assertEqual(budget.requests_timed_out, 1)
         self.assertTrue(budget.governance_incomplete)
+
+    def test_timeout_consumes_total_semantic_budget(self) -> None:
+        budget = SemanticBudget(max_requests=2, max_total_seconds=10, per_request_deadline_seconds=0.05)
+        client = FakeSemanticClient([])
+
+        def never_finishes(prompt: str, *, model: str):
+            time.sleep(1)
+            return "never"
+
+        client.complete = never_finishes  # type: ignore[method-assign]
+        with self.assertRaises(SemanticDeadlineExceeded):
+            BudgetedSemanticClient(client, budget, "extraction").complete("", model="m")
+        self.assertGreaterEqual(budget.total_semantic_wall_ms, 40)
+        self.assertLess(budget.remaining_time_budget, 9.99)
+        self.assertEqual(budget.requests_timed_out, 1)
 
     def test_incomplete_governance_requires_clarification(self) -> None:
         budget = SemanticBudget(max_requests=0)
