@@ -261,7 +261,12 @@ class SemanticExtractionTests(unittest.TestCase):
         self.assertEqual(body["temperature"], 0)
         self.assertEqual(body["thinking"], {"type": "enabled"})
         self.assertEqual(body["reasoning_effort"], "high")
+        self.assertEqual(urlopen.call_args.kwargs["timeout"], 60.0)
         self.assertNotIn("secret", json.dumps(body))
+
+    def test_client_rejects_non_positive_timeout(self) -> None:
+        with self.assertRaises(ValueError):
+            OpenAICompatibleExtractionClient("secret", timeout=0)
 
     def test_normalization_rejects_unsupported_role_and_type(self) -> None:
         candidate = ClaimCandidate("x", "p", "v", "string", "VERIFIED", 0.9, _provenance())

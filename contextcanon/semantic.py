@@ -274,9 +274,18 @@ def parse_semantic_response(response: object) -> object:
 class OpenAICompatibleExtractionClient:
     """Dependency-free Chat Completions client for structured extraction."""
 
-    def __init__(self, api_key: str, *, base_url: str = "https://api.deepseek.com") -> None:
+    def __init__(
+        self,
+        api_key: str,
+        *,
+        base_url: str = "https://api.deepseek.com",
+        timeout: float = 60.0,
+    ) -> None:
+        if timeout <= 0:
+            raise ValueError("timeout must be positive")
         self.api_key = api_key
         self.base_url = base_url.rstrip("/")
+        self.timeout = timeout
 
     def complete(self, prompt: str, *, model: str) -> str:
         body = json.dumps(
@@ -299,7 +308,7 @@ class OpenAICompatibleExtractionClient:
             method="POST",
         )
         try:
-            with request.urlopen(call, timeout=120) as response:
+            with request.urlopen(call, timeout=self.timeout) as response:
                 payload = json.loads(response.read().decode("utf-8"))
         except (error.HTTPError, error.URLError, TimeoutError, OSError) as exc:
             raise RuntimeError("semantic extraction provider request failed") from exc
