@@ -486,9 +486,9 @@ class AgentAbstainAdapter:
         return "\n".join(lines)
 
     @property
-    def extraction_diagnostics(self) -> tuple[str, ...]:
+    def extraction_diagnostics(self) -> tuple[object, ...]:
         diagnostics = getattr(self.ledger.extractor, "diagnostics", ())
-        return tuple(str(item) for item in diagnostics)
+        return tuple(diagnostics)
 
 
 def replay(observations: Iterable[RuntimeObservation]) -> AgentAbstainAdapter:

@@ -12,6 +12,7 @@ from contextcanon.semantic import (
     LLMStructuredExtractor,
     OpenAICompatibleExtractionClient,
     Provenance,
+    SemanticCompletion,
     normalize_candidate,
 )
 from experiments.agentabstain.adapter import AgentAbstainAdapter, RuntimeObservation
@@ -98,14 +99,98 @@ class SemanticExtractionTests(unittest.TestCase):
             FakeSemanticClient(lambda prompt, model: "not json")
         )
         self.assertEqual(malformed.extract(observation), [])
-        self.assertEqual(malformed.last_diagnostic, "extraction_error:JSONDecodeError")
+        self.assertEqual(malformed.last_diagnostic["category"], "INVALID_JSON")
+        self.assertEqual(malformed.last_diagnostic["exception"], "JSONDecodeError")
 
         low_confidence = LLMStructuredExtractor(FakeSemanticClient(lambda prompt, model: json.dumps({"claims": [{
             "entity": "x", "property": "status", "value": "open",
             "value_type": "enum", "role": "OBSERVED", "confidence": 0.2,
         }]})))
         self.assertEqual(low_confidence.extract(observation), [])
-        self.assertEqual(low_confidence.last_diagnostic, "no_acceptable_claims")
+        self.assertEqual(low_confidence.last_diagnostic["category"], "NORMALIZATION_REJECTED")
+
+    def test_valid_json_response_records_safe_metadata(self) -> None:
+        response = SemanticCompletion(
+            '{"claims": []}', finish_reason="stop", usage={"total_tokens": 12}, model="deepseek-v4-pro"
+        )
+        extractor = LLMStructuredExtractor(FakeSemanticClient(lambda prompt, model: response))
+        observation = type(
+            "Observation", (), {
+                "success": True, "tool_name": "tool", "tool_kind": "lookup",
+                "tool_parameters": {}, "tool_result": "value", "call_index": 0,
+            }
+        )()
+        self.assertEqual(extractor.extract(observation), [])
+        self.assertIsNone(extractor.last_diagnostic)
+        self.assertEqual(extractor.last_response_metadata["finish_reason"], "stop")
+        self.assertEqual(extractor.last_response_metadata["content_length"], 14)
+
+    def test_empty_response_is_classified(self) -> None:
+        extractor = LLMStructuredExtractor(
+            FakeSemanticClient(lambda prompt, model: SemanticCompletion("", finish_reason="stop"))
+        )
+        observation = type(
+            "Observation", (), {
+                "success": True, "tool_name": "tool", "tool_kind": "lookup",
+                "tool_parameters": {}, "tool_result": "value", "call_index": 0,
+            }
+        )()
+        self.assertEqual(extractor.extract(observation), [])
+        self.assertEqual(extractor.last_diagnostic["category"], "EMPTY_CONTENT")
+
+    def test_empty_length_terminated_response_is_truncated(self) -> None:
+        extractor = LLMStructuredExtractor(
+            FakeSemanticClient(lambda prompt, model: SemanticCompletion("", finish_reason="length"))
+        )
+        observation = type(
+            "Observation", (), {
+                "success": True, "tool_name": "tool", "tool_kind": "lookup",
+                "tool_parameters": {}, "tool_result": "value", "call_index": 0,
+            }
+        )()
+        self.assertEqual(extractor.extract(observation), [])
+        self.assertEqual(extractor.last_diagnostic["category"], "TRUNCATED_JSON")
+
+    def test_length_terminated_response_is_classified_as_truncated_json(self) -> None:
+        extractor = LLMStructuredExtractor(
+            FakeSemanticClient(lambda prompt, model: SemanticCompletion(
+                '{"claims": [{"entity": "event",', finish_reason="length"
+            ))
+        )
+        observation = type(
+            "Observation", (), {
+                "success": True, "tool_name": "tool", "tool_kind": "lookup",
+                "tool_parameters": {}, "tool_result": "value", "call_index": 0,
+            }
+        )()
+        self.assertEqual(extractor.extract(observation), [])
+        self.assertEqual(extractor.last_diagnostic["category"], "TRUNCATED_JSON")
+
+    def test_valid_json_with_wrong_schema_is_classified(self) -> None:
+        extractor = LLMStructuredExtractor(FakeSemanticClient(lambda prompt, model: {"foo": []}))
+        observation = type(
+            "Observation", (), {
+                "success": True, "tool_name": "tool", "tool_kind": "lookup",
+                "tool_parameters": {}, "tool_result": "value", "call_index": 0,
+            }
+        )()
+        self.assertEqual(extractor.extract(observation), [])
+        self.assertEqual(extractor.last_diagnostic["category"], "INVALID_SCHEMA")
+
+    def test_provider_failure_is_classified_without_sensitive_details(self) -> None:
+        class FailingClient:
+            def complete(self, prompt: str, *, model: str):
+                raise RuntimeError("provider unavailable")
+
+        extractor = LLMStructuredExtractor(FailingClient())
+        observation = type(
+            "Observation", (), {
+                "success": True, "tool_name": "tool", "tool_kind": "lookup",
+                "tool_parameters": {}, "tool_result": "value", "call_index": 0,
+            }
+        )()
+        self.assertEqual(extractor.extract(observation), [])
+        self.assertEqual(extractor.last_diagnostic["category"], "PROVIDER_ERROR")
 
     def test_failed_observation_produces_no_claim(self) -> None:
         observation = type("Observation", (), {"success": False, "tool_name": "tool"})()
@@ -113,7 +198,8 @@ class SemanticExtractionTests(unittest.TestCase):
             FakeSemanticClient(lambda prompt, model: self.fail("must not call model"))
         )
         self.assertEqual(extractor.extract(observation), [])
-        self.assertEqual(extractor.last_diagnostic, "observation_failed")
+        self.assertEqual(extractor.last_diagnostic["category"], "PROVIDER_ERROR")
+        self.assertEqual(extractor.last_diagnostic["detail"], "observation_failed")
 
     def test_client_type_error_does_not_trigger_a_second_request(self) -> None:
         class RaisingClient:

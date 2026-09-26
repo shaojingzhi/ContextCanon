@@ -263,6 +263,12 @@ async def run_one(args: argparse.Namespace, task: str, side: str) -> dict[str, A
     }
     if governance is not None:
         metadata["semantic_diagnostics"] = governance.metrics
+        metadata["semantic_response_diagnostics"] = list(
+            getattr(governance.extractor, "response_diagnostics", ())
+        )
+        metadata["extraction_diagnostics"] = list(
+            getattr(governance.extractor, "diagnostics", ())
+        )
         metadata["semantic_diagnostics"]["fast_path_alignment_hits"] = getattr(
             governance.store.aligner, "fast_path_hits", 0
         )

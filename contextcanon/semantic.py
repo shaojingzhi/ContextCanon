@@ -85,6 +85,20 @@ class SemanticModelClient(Protocol):
 
 
 @dataclass(frozen=True, slots=True)
+class SemanticCompletion:
+    """Provider content plus bounded, non-sensitive response metadata."""
+
+    content: str
+    finish_reason: str | None = None
+    usage: JSONValue = None
+    model: str | None = None
+
+    @property
+    def response_content_present(self) -> bool:
+        return bool(self.content)
+
+
+@dataclass(frozen=True, slots=True)
 class SemanticInferenceConfig:
     """Low-cost provider settings for governance, separate from the Agent model."""
 
@@ -129,6 +143,16 @@ def _compact(value: object, limit: int = 800) -> str:
     text = value if isinstance(value, str) else json.dumps(
         sanitize_runtime_value(value), ensure_ascii=False, sort_keys=True, separators=(",", ":")
     )
+    return text[:limit]
+
+
+def _response_preview(value: object, limit: int = 400) -> str:
+    """Return a bounded preview with common credential-shaped text redacted."""
+
+    text = value if isinstance(value, str) else _compact(value, limit)
+    text = re.sub(r"Bearer\s+[A-Za-z0-9._~-]+", "Bearer [REDACTED]", text, flags=re.IGNORECASE)
+    text = re.sub(r"sk-[A-Za-z0-9_-]+", "sk-[REDACTED]", text)
+    text = re.sub(r"(?i)(api[_ -]?key\s*[:=]\s*)[^,\s]+", r"\1[REDACTED]", text)
     return text[:limit]
 
 
@@ -307,7 +331,7 @@ class OpenAICompatibleExtractionClient:
         self.timeout = timeout
         self.inference = inference or SemanticInferenceConfig()
 
-    def complete(self, prompt: str, *, model: str) -> str:
+    def complete(self, prompt: str, *, model: str) -> SemanticCompletion:
         payload: dict[str, object] = {
             "model": model,
             "messages": [{"role": "user", "content": prompt}],
@@ -352,17 +376,106 @@ class OpenAICompatibleExtractionClient:
                     payload = json.loads(response.read().decode("utf-8"))
         except Exception as exc:
             if httpx is not None and isinstance(exc, httpx.HTTPError):
-                raise RuntimeError("semantic extraction provider request failed") from exc
+                raise SemanticProviderError(
+                    "semantic extraction provider request failed",
+                    metadata={"provider_error_category": "HTTP_ERROR"},
+                ) from exc
             if httpx is None or isinstance(exc, (error.HTTPError, error.URLError, TimeoutError, OSError)):
-                raise RuntimeError("semantic extraction provider request failed") from exc
+                raise SemanticProviderError(
+                    "semantic extraction provider request failed",
+                    metadata={"provider_error_category": "TRANSPORT_ERROR"},
+                ) from exc
             raise
         try:
             content = payload["choices"][0]["message"]["content"]
         except (KeyError, IndexError, TypeError) as exc:
-            raise RuntimeError("semantic extraction provider returned no content") from exc
+            raise SemanticProviderError(
+                "semantic extraction provider returned no content",
+                metadata={
+                    "provider_error_category": "MALFORMED_RESPONSE",
+                    "response_content_present": False,
+                },
+            ) from exc
         if not isinstance(content, str):
-            raise RuntimeError("semantic extraction provider content is not text")
-        return content
+            raise SemanticProviderError(
+                "semantic extraction provider content is not text",
+                metadata={
+                    "provider_error_category": "NON_TEXT_CONTENT",
+                    "response_content_present": False,
+                },
+            )
+        choice = payload["choices"][0]
+        usage = payload.get("usage")
+        return SemanticCompletion(
+            content=content,
+            finish_reason=choice.get("finish_reason") if isinstance(choice, Mapping) else None,
+            usage=sanitize_runtime_value(usage),
+            model=payload.get("model") if isinstance(payload.get("model"), str) else model,
+        )
+
+
+class SemanticProviderError(RuntimeError):
+    """Provider failure carrying only safe diagnostic metadata."""
+
+    def __init__(self, message: str, *, metadata: Mapping[str, JSONValue] | None = None) -> None:
+        super().__init__(message)
+        self.metadata = dict(metadata or {})
+
+
+def _response_metadata(response: object) -> dict[str, JSONValue]:
+    if isinstance(response, SemanticCompletion):
+        return {
+            "finish_reason": response.finish_reason,
+            "content_length": len(response.content),
+            "response_content_present": response.response_content_present,
+            "usage": response.usage,
+            "model": response.model,
+            "response_preview": _response_preview(response.content),
+        }
+    if isinstance(response, str):
+        return {
+            "finish_reason": None,
+            "content_length": len(response),
+            "response_content_present": bool(response),
+            "response_preview": _response_preview(response),
+        }
+    if isinstance(response, Mapping):
+        encoded = json.dumps(response, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+        return {
+            "finish_reason": None,
+            "content_length": len(encoded),
+            "response_content_present": True,
+            "response_preview": _response_preview(encoded),
+        }
+    return {
+        "finish_reason": None,
+        "content_length": 0,
+        "response_content_present": False,
+        "response_preview": _response_preview(response),
+    }
+
+
+def _looks_truncated(text: str) -> bool:
+    stripped = text.rstrip()
+    if not stripped:
+        return False
+    if stripped.endswith(("{", "[", ",", ":")):
+        return True
+    return stripped.count("{") > stripped.count("}") or stripped.count("[") > stripped.count("]")
+
+
+def _diagnostic(
+    category: str,
+    *,
+    metadata: Mapping[str, JSONValue] | None = None,
+    exception: BaseException | None = None,
+) -> dict[str, JSONValue]:
+    result: dict[str, JSONValue] = {"category": category}
+    result.update(metadata or {})
+    if exception is not None:
+        result["exception"] = type(exception).__name__
+        result["detail"] = str(exception)[:240]
+    return result
 
 
 class LLMStructuredExtractor:
@@ -376,12 +489,14 @@ class LLMStructuredExtractor:
     ) -> None:
         self.client = client
         self.model = model
-        self.last_diagnostic: str | None = None
-        self.diagnostics: list[str] = []
+        self.last_diagnostic: dict[str, JSONValue] | None = None
+        self.last_response_metadata: dict[str, JSONValue] = {}
+        self.response_diagnostics: list[dict[str, JSONValue]] = []
+        self.diagnostics: list[dict[str, JSONValue]] = []
 
-    def _fail(self, message: str) -> list[ClaimCandidate]:
-        self.last_diagnostic = message
-        self.diagnostics.append(message)
+    def _fail(self, diagnostic: dict[str, JSONValue]) -> list[ClaimCandidate]:
+        self.last_diagnostic = diagnostic
+        self.diagnostics.append(diagnostic)
         return []
 
     def build_prompt(self, observation: object, context: ExtractionContext | None = None) -> str:
@@ -413,38 +528,61 @@ class LLMStructuredExtractor:
 
     def extract(self, observation: object, context: ExtractionContext | None = None) -> list[ClaimCandidate]:
         self.last_diagnostic = None
+        self.last_response_metadata = {}
         if not bool(getattr(observation, "success", True)):
-            return self._fail("observation_failed")
+            return self._fail({"category": "PROVIDER_ERROR", "detail": "observation_failed"})
         try:
             prompt = self.build_prompt(observation, context)
             response = self.client.complete(prompt, model=self.model)
-            payload = parse_semantic_response(response)
-            if not isinstance(payload, Mapping) or not isinstance(payload.get("claims"), list):
-                return self._fail("malformed_claim_schema")
-            provenance = observation_provenance(observation)
-            candidates: list[ClaimCandidate] = []
-            for item in payload["claims"]:
-                if not isinstance(item, Mapping):
-                    continue
-                required = ("entity", "property", "value", "value_type", "role", "confidence")
-                if any(key not in item for key in required):
-                    continue
-                optional = {
-                    key: item[key]
-                    for key in ("temporal_scope", "observed_at", "valid_from", "valid_until")
-                    if key in item
-                }
-                candidates.append(ClaimCandidate(
-                    provenance=provenance,
-                    **{key: item[key] for key in required},
-                    **optional,
-                ))
-            normalized = normalize_candidates(candidates)
-            if not normalized and payload["claims"]:
-                return self._fail("no_acceptable_claims")
-            return normalized
         except Exception as exc:
-            return self._fail(f"extraction_error:{type(exc).__name__}")
+            metadata = getattr(exc, "metadata", {})
+            self.last_response_metadata = dict(metadata)
+            self.response_diagnostics.append(dict(metadata))
+            return self._fail(_diagnostic("PROVIDER_ERROR", metadata=metadata, exception=exc))
+        metadata = _response_metadata(response)
+        self.last_response_metadata = metadata
+        self.response_diagnostics.append(metadata)
+        if not metadata["response_content_present"]:
+            category = (
+                "TRUNCATED_JSON"
+                if metadata.get("finish_reason") == "length"
+                else "EMPTY_CONTENT"
+            )
+            return self._fail(_diagnostic(category, metadata=metadata))
+        raw_text = response.content if isinstance(response, SemanticCompletion) else response
+        if not isinstance(raw_text, (str, Mapping)):
+            return self._fail(_diagnostic("PROVIDER_ERROR", metadata=metadata))
+        try:
+            payload = parse_semantic_response(response)
+        except Exception as exc:
+            category = "TRUNCATED_JSON" if (
+                metadata.get("finish_reason") == "length" or _looks_truncated(raw_text)
+            ) else "INVALID_JSON"
+            return self._fail(_diagnostic(category, metadata=metadata, exception=exc))
+        if not isinstance(payload, Mapping) or not isinstance(payload.get("claims"), list):
+            return self._fail(_diagnostic("INVALID_SCHEMA", metadata=metadata))
+        provenance = observation_provenance(observation)
+        candidates: list[ClaimCandidate] = []
+        for item in payload["claims"]:
+            if not isinstance(item, Mapping):
+                return self._fail(_diagnostic("INVALID_SCHEMA", metadata=metadata))
+            required = ("entity", "property", "value", "value_type", "role", "confidence")
+            if any(key not in item for key in required):
+                return self._fail(_diagnostic("INVALID_SCHEMA", metadata=metadata))
+            optional = {
+                key: item[key]
+                for key in ("temporal_scope", "observed_at", "valid_from", "valid_until")
+                if key in item
+            }
+            candidates.append(ClaimCandidate(
+                provenance=provenance,
+                **{key: item[key] for key in required},
+                **optional,
+            ))
+        normalized = normalize_candidates(candidates)
+        if not normalized and payload["claims"]:
+            return self._fail(_diagnostic("NORMALIZATION_REJECTED", metadata=metadata))
+        return normalized
 
 
 __all__ = [
@@ -456,6 +594,8 @@ __all__ = [
     "SemanticExtractor",
     "SemanticInferenceConfig",
     "SemanticModelClient",
+    "SemanticCompletion",
+    "SemanticProviderError",
     "normalize_candidate",
     "normalize_candidates",
     "normalize_value",
