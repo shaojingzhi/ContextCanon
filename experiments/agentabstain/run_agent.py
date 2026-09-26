@@ -163,7 +163,8 @@ async def run_one(args: argparse.Namespace, task: str, side: str) -> dict[str, A
             base_url=os.environ.get("OPENAI_BASE_URL", "https://api.deepseek.com"),
             timeout=args.semantic_request_deadline_seconds,
             inference=SemanticInferenceConfig(
-                max_output_tokens=args.semantic_extraction_max_output_tokens
+                max_output_tokens=args.semantic_extraction_max_output_tokens,
+                thinking=False,
             ),
         )
         semantic_client = OpenAICompatibleExtractionClient(
@@ -270,6 +271,7 @@ async def run_one(args: argparse.Namespace, task: str, side: str) -> dict[str, A
             "max_output_tokens": args.semantic_max_output_tokens,
             "default_max_output_tokens": args.semantic_max_output_tokens,
             "extraction_max_output_tokens": args.semantic_extraction_max_output_tokens,
+            "extraction_thinking": "disabled",
         },
         "task_wall_time_ms": round((monotonic() - task_started) * 1000),
     }

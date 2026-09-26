@@ -421,6 +421,42 @@ class SemanticExtractionTests(unittest.TestCase):
         body = json.loads(FakeClient.post_kwargs["content"])
         self.assertEqual(body["max_tokens"], 1024)
 
+    def test_extraction_client_can_explicitly_disable_thinking(self) -> None:
+        client = OpenAICompatibleExtractionClient(
+            "secret",
+            inference=SemanticInferenceConfig(max_output_tokens=1024, thinking=False),
+        )
+        response = SimpleNamespace(
+            json=lambda: {"choices": [{"message": {"content": '{"claims": []}'}}]},
+            raise_for_status=lambda: None,
+        )
+
+        class FakeClient:
+            post_kwargs = None
+
+            def __init__(self, **kwargs):
+                pass
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                return False
+
+            def post(self, url, **kwargs):
+                FakeClient.post_kwargs = {"url": url, **kwargs}
+                return response
+
+        fake_httpx = SimpleNamespace(
+            Client=FakeClient,
+            Timeout=lambda default, **parts: default,
+            HTTPError=RuntimeError,
+        )
+        with mock.patch("contextcanon.semantic.httpx", fake_httpx):
+            client.complete("extract facts", model="deepseek-v4-pro")
+        body = json.loads(FakeClient.post_kwargs["content"])
+        self.assertEqual(body["thinking"], {"type": "disabled"})
+
     def test_client_uses_urllib_when_httpx_is_unavailable(self) -> None:
         client = OpenAICompatibleExtractionClient("secret", timeout=12.0)
         response = mock.MagicMock()
