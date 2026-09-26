@@ -77,6 +77,12 @@ class SemanticBudgetTests(unittest.TestCase):
         self.assertTrue(budget.governance_incomplete)
         self.assertEqual(budget.requests_skipped_budget, 1)
 
+    def test_semantic_stages_share_one_task_budget(self) -> None:
+        budget = SemanticBudget(max_requests=2, max_total_seconds=10, per_request_deadline_seconds=1)
+        extraction = BudgetedSemanticClient(FakeSemanticClient(["one"]), budget, "extraction")
+        alignment = BudgetedSemanticClient(FakeSemanticClient(["two"]), budget, "alignment")
+        self.assertIs(extraction.budget, alignment.budget)
+
     def test_total_budget_is_checked_before_new_request(self) -> None:
         now = [0.0]
         budget = SemanticBudget(

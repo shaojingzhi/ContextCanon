@@ -33,6 +33,8 @@ TASKS = ("preview_008", "preview_013", "preview_015")
 SIDES = ("act", "abstain")
 CONDITIONS = ("baseline", "governed", "guard")
 EXTRACTORS = ("legacy", "llm")
+DEFAULT_SEMANTIC_MAX_OUTPUT_TOKENS = 256
+DEFAULT_SEMANTIC_EXTRACTION_MAX_OUTPUT_TOKENS = 1024
 
 
 def _format_exception(stage: str, exc: BaseException) -> str:
@@ -156,6 +158,14 @@ async def run_one(args: argparse.Namespace, task: str, side: str) -> dict[str, A
             max_total_seconds=args.semantic_max_total_seconds,
             per_request_deadline_seconds=args.semantic_request_deadline_seconds,
         )
+        extraction_client = OpenAICompatibleExtractionClient(
+            api_key,
+            base_url=os.environ.get("OPENAI_BASE_URL", "https://api.deepseek.com"),
+            timeout=args.semantic_request_deadline_seconds,
+            inference=SemanticInferenceConfig(
+                max_output_tokens=args.semantic_extraction_max_output_tokens
+            ),
+        )
         semantic_client = OpenAICompatibleExtractionClient(
             api_key,
             base_url=os.environ.get("OPENAI_BASE_URL", "https://api.deepseek.com"),
@@ -163,7 +173,7 @@ async def run_one(args: argparse.Namespace, task: str, side: str) -> dict[str, A
             inference=SemanticInferenceConfig(max_output_tokens=args.semantic_max_output_tokens),
         )
         extractor = LLMStructuredExtractor(
-            BudgetedSemanticClient(semantic_client, budget, "extraction"), model=args.model
+            BudgetedSemanticClient(extraction_client, budget, "extraction"), model=args.model
         )
         aligner = LLMEvidenceAligner(
             BudgetedSemanticClient(semantic_client, budget, "alignment"), model=args.model
@@ -258,6 +268,8 @@ async def run_one(args: argparse.Namespace, task: str, side: str) -> dict[str, A
             "thinking": None,
             "reasoning_effort": None,
             "max_output_tokens": args.semantic_max_output_tokens,
+            "default_max_output_tokens": args.semantic_max_output_tokens,
+            "extraction_max_output_tokens": args.semantic_extraction_max_output_tokens,
         },
         "task_wall_time_ms": round((monotonic() - task_started) * 1000),
     }
@@ -355,7 +367,16 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--semantic-max-requests", type=int, default=12)
     parser.add_argument("--semantic-max-total-seconds", type=float, default=30.0)
     parser.add_argument("--semantic-request-deadline-seconds", type=float, default=5.0)
-    parser.add_argument("--semantic-max-output-tokens", type=int, default=256)
+    parser.add_argument(
+        "--semantic-max-output-tokens",
+        type=int,
+        default=DEFAULT_SEMANTIC_MAX_OUTPUT_TOKENS,
+    )
+    parser.add_argument(
+        "--semantic-extraction-max-output-tokens",
+        type=int,
+        default=DEFAULT_SEMANTIC_EXTRACTION_MAX_OUTPUT_TOKENS,
+    )
     args = parser.parse_args(argv)
     os.environ["AGENTABSTAIN_DATA"] = str(Path(args.agentabstain_data).expanduser())
     if not args.run:
