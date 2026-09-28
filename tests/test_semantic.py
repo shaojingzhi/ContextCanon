@@ -239,6 +239,46 @@ class SemanticExtractionTests(unittest.TestCase):
         self.assertNotIn("should_act", prompt)
         self.assertNotIn("pair_id=secret", prompt)
 
+    def test_prompt_bounds_claims_and_prioritizes_mismatches(self) -> None:
+        captured: list[str] = []
+        extractor = LLMStructuredExtractor(FakeSemanticClient(
+            lambda prompt, model: captured.append(prompt) or {"claims": []}
+        ))
+        observation = type(
+            "Observation", (), {
+                "success": True, "tool_name": "verify", "tool_kind": "verify",
+                "tool_parameters": {}, "tool_result": {"mismatches": []}, "call_index": 0,
+            }
+        )()
+        extractor.extract(observation)
+        prompt = captured[0]
+        self.assertIn("Return at most 6 claims", prompt)
+        self.assertIn("prioritize the expected and actual values", prompt)
+        self.assertIn("Do not extract file or transport metadata", prompt)
+
+    def test_extractor_enforces_claim_limit(self) -> None:
+        claims = [
+            {
+                "entity": "event",
+                "property": f"field-{index}",
+                "value": f"value-{index}",
+                "value_type": "string",
+                "role": "OBSERVED",
+                "confidence": 0.9,
+            }
+            for index in range(8)
+        ]
+        extractor = LLMStructuredExtractor(
+            FakeSemanticClient(lambda prompt, model: {"claims": claims})
+        )
+        observation = type(
+            "Observation", (), {
+                "success": True, "tool_name": "tool", "tool_kind": "lookup",
+                "tool_parameters": {}, "tool_result": "value", "call_index": 0,
+            }
+        )()
+        self.assertEqual(len(extractor.extract(observation)), 6)
+
     def test_business_metadata_fields_are_not_recursively_deleted(self) -> None:
         captured: list[str] = []
         extractor = LLMStructuredExtractor(FakeSemanticClient(

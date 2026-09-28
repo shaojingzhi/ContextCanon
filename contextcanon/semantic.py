@@ -27,6 +27,7 @@ from .core.types import JSONValue, TemporalScope
 _VALUE_TYPES = frozenset({"string", "date", "datetime", "boolean", "number", "enum"})
 _ROLES = frozenset({"OBSERVED", "INTENDED", "DOCUMENTED"})
 _MIN_CONFIDENCE = 0.5
+_MAX_EXTRACTION_CLAIMS = 6
 _FORBIDDEN_KEYS = frozenset(
     {
         "task_type", "pair_id", "abstention_trigger", "contradiction",
@@ -519,8 +520,13 @@ class LLMStructuredExtractor:
             "datetime, boolean, number, and enum. Supported roles are OBSERVED, INTENDED, "
             "and DOCUMENTED. temporal_scope may be CURRENT, FUTURE, HISTORICAL, INTERVAL, "
             "or UNKNOWN. Include observed_at, valid_from, or valid_until only when the "
-            "observation states them explicitly. Return an empty claims array when no useful "
-            "fact is supported."
+            f"observation states them explicitly. Return at most {_MAX_EXTRACTION_CLAIMS} claims. "
+            "When verification "
+            "or mismatch details are present, prioritize the expected and actual values for "
+            "the mismatched fields. Otherwise prioritize primary domain facts. Do not extract "
+            "file or transport metadata such as paths, media types, byte sizes, or record "
+            "timestamps unless the optional semantic hint explicitly requests them. Return "
+            "an empty claims array when no useful fact is supported."
             + hint_text
             + "\nObservation:\n"
             + json.dumps(payload, ensure_ascii=False, sort_keys=True, indent=2)
@@ -563,7 +569,7 @@ class LLMStructuredExtractor:
             return self._fail(_diagnostic("INVALID_SCHEMA", metadata=metadata))
         provenance = observation_provenance(observation)
         candidates: list[ClaimCandidate] = []
-        for item in payload["claims"]:
+        for item in payload["claims"][:_MAX_EXTRACTION_CLAIMS]:
             if not isinstance(item, Mapping):
                 return self._fail(_diagnostic("INVALID_SCHEMA", metadata=metadata))
             required = ("entity", "property", "value", "value_type", "role", "confidence")
