@@ -302,7 +302,20 @@ def parse_semantic_response(response: object) -> object:
         text = response.strip()
         if text.startswith("```"):
             text = re.sub(r"^```(?:json)?\s*|\s*```$", "", text, flags=re.IGNORECASE | re.DOTALL)
-        return json.loads(text)
+        try:
+            return json.loads(text)
+        except json.JSONDecodeError as first_error:
+            decoder = json.JSONDecoder()
+            for marker in ("{", "["):
+                start = text.find(marker)
+                if start < 0:
+                    continue
+                try:
+                    value, _ = decoder.raw_decode(text[start:])
+                    return value
+                except json.JSONDecodeError:
+                    continue
+            raise first_error
     for attribute in ("output_text", "text", "content"):
         value = getattr(response, attribute, None)
         if value is not None:

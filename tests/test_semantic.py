@@ -32,6 +32,18 @@ class FakeSemanticClient:
 
 
 class SemanticExtractionTests(unittest.TestCase):
+    def test_semantic_json_parser_accepts_bounded_prose_around_json(self) -> None:
+        extractor = LLMStructuredExtractor(
+            FakeSemanticClient(lambda _prompt, _model: "Result:\n{\"claims\": []}\nDone"),
+            model="m",
+        )
+        claims = extractor.extract(RuntimeObservation(
+            "tool.read", "lookup", {}, {"value": "ok"}, True, 0,
+        ))
+
+        self.assertEqual(claims, [])
+        self.assertIsNone(extractor.last_diagnostic)
+
     def test_dates_normalize_without_forcing_a_semantic_dimension_key(self) -> None:
         responses = iter(
             [
