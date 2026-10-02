@@ -35,6 +35,24 @@ class SemanticBudgetTests(unittest.TestCase):
         self.assertEqual(client.prompts, [])
         self.assertEqual(aligner.fast_path_hits, 1)
 
+    def test_non_exact_alignment_is_cached_by_fact_descriptors(self) -> None:
+        client = FakeSemanticClient([{"relation": "SAME_FACT", "confidence": 0.95}])
+        aligner = LLMEvidenceAligner(client)
+        incoming = _candidate(
+            "one", "a", "2026-03-22", scope=TemporalScope.FUTURE
+        )
+        existing = FactDescriptor(
+            "Spring Gala", "the date when the event takes place", TemporalScope.CURRENT
+        )
+
+        first = aligner.align(incoming, existing)
+        second = aligner.align(incoming, existing)
+
+        self.assertEqual(first.relation, FactAlignment.SAME_FACT)
+        self.assertEqual(second, first)
+        self.assertEqual(len(client.prompts), 1)
+        self.assertEqual(aligner.cache_hits, 1)
+
     def test_same_value_uses_relation_fast_path(self) -> None:
         client = FakeSemanticClient([])
         classifier = LLMRelationClassifier(client)

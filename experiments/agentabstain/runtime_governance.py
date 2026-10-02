@@ -160,6 +160,7 @@ class RuntimeGovernance:
             metrics["observation_failures"] = list(self.observation_failures)
         for name, component in (
             ("fast_path_alignment_hits", self.store.aligner),
+            ("alignment_cache_hits", self.store.aligner),
             ("alignment_candidates_considered", self.store.aligner),
             ("fast_path_relation_hits", self.store.relation_classifier),
             ("tool_semantics_cache_hits", getattr(self, "tool_semantics_resolver", None)),

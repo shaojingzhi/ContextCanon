@@ -212,6 +212,8 @@ class LLMEvidenceAligner:
         self.diagnostics: list[str] = []
         self.fast_path_hits = 0
         self.alignment_candidates_considered = 0
+        self.cache_hits = 0
+        self._cache: dict[tuple[str, str], AlignmentResult] = {}
 
     def align(
         self,
@@ -222,6 +224,14 @@ class LLMEvidenceAligner:
         if deterministic.relation is FactAlignment.SAME_FACT:
             self.fast_path_hits += 1
             return deterministic
+        cache_key = (
+            json.dumps(_fact_payload(incoming.fact), sort_keys=True, separators=(",", ":")),
+            json.dumps(_fact_payload(existing_fact), sort_keys=True, separators=(",", ":")),
+        )
+        cached = self._cache.get(cache_key)
+        if cached is not None:
+            self.cache_hits += 1
+            return cached
         prompt = (
             "Decide only whether these descriptors refer to the same real-world fact in "
             "the same relevant temporal scope. Do not choose which source is true and do "
@@ -248,10 +258,14 @@ class LLMEvidenceAligner:
                 raise ValueError("alignment confidence is out of range")
             if confidence < self.minimum_confidence:
                 return AlignmentResult(FactAlignment.UNKNOWN, confidence)
-            return AlignmentResult(relation, confidence)
+            result = AlignmentResult(relation, confidence)
+            self._cache[cache_key] = result
+            return result
         except Exception as exc:
             self.diagnostics.append(f"alignment_error:{type(exc).__name__}")
-            return AlignmentResult(FactAlignment.UNKNOWN, 0.0)
+            result = AlignmentResult(FactAlignment.UNKNOWN, 0.0)
+            self._cache[cache_key] = result
+            return result
 
 
 class DeterministicRelationClassifier:
