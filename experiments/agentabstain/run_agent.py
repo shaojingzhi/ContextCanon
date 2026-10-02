@@ -366,7 +366,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--max-turns", type=int, default=30)
     parser.add_argument("--results-root", default="experiments/agentabstain/results")
     parser.add_argument("--run", action="store_true", help="required before making model/API calls")
-    parser.add_argument("--semantic-max-requests", type=int, default=12)
+    parser.add_argument("--semantic-max-requests", type=int, default=16)
     parser.add_argument("--semantic-max-total-seconds", type=float, default=30.0)
     parser.add_argument("--semantic-request-deadline-seconds", type=float, default=5.0)
     parser.add_argument(
