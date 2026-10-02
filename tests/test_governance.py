@@ -285,6 +285,16 @@ class OpenWorldGovernanceTests(unittest.TestCase):
         )
         self.assertEqual(relation, EvidenceRelation.CONFLICTING)
 
+    def test_llm_relation_classifier_has_safe_current_conflict_fallback(self) -> None:
+        client = FakeSemanticClient(["not json"])
+        classifier = LLMRelationClassifier(client)
+        relation = classifier.classify(
+            _candidate("e2", "calendar-b", "2026-03-23"),
+            _candidate("e1", "calendar-a", "2026-03-22"),
+        )
+        self.assertEqual(relation, EvidenceRelation.CONFLICTING)
+        self.assertIn("relation_fallback:CONFLICTING", classifier.diagnostics)
+
     def test_llm_relation_classifier_low_confidence_is_unknown(self) -> None:
         client = FakeSemanticClient([
             {"relation": "CONFLICTING", "confidence": 0.3},

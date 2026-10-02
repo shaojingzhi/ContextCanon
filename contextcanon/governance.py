@@ -461,6 +461,23 @@ class LLMRelationClassifier:
             self._cache[cache_key] = relation
             return relation
         except Exception as exc:
+            if (
+                _value_key(incoming.value) != _value_key(existing.value)
+                and _semantic_text(incoming.fact.subject)
+                == _semantic_text(existing.fact.subject)
+                and _semantic_text(incoming.fact.semantic_dimension)
+                == _semantic_text(existing.fact.semantic_dimension)
+                and incoming.fact.temporal_scope is TemporalScope.CURRENT
+                and existing.fact.temporal_scope is TemporalScope.CURRENT
+                and all(
+                    getattr(item.evidence, field) is None
+                    for item in (incoming, existing)
+                    for field in ("valid_from", "valid_until")
+                )
+            ):
+                self.diagnostics.append("relation_fallback:CONFLICTING")
+                self._cache[cache_key] = EvidenceRelation.CONFLICTING
+                return EvidenceRelation.CONFLICTING
             self.diagnostics.append(f"relation_error:{type(exc).__name__}")
             self._cache[cache_key] = EvidenceRelation.UNKNOWN
             return EvidenceRelation.UNKNOWN
