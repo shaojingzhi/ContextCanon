@@ -210,6 +210,38 @@ class RuntimeGovernance:
         aligner = self.store.aligner
         relation = self.store.relation_classifier
         tool_semantics = self.tool_semantics_resolver
+        core_requests = self.budget.requests_started if self.budget is not None else 0
+        core_time_ms = self.budget.total_semantic_wall_ms if self.budget is not None else 0
+        tool_budget = getattr(tool_semantics, "budget", None)
+        tool_requests = tool_budget.requests_started if tool_budget is not None else 0
+        tool_time_ms = tool_budget.total_semantic_wall_ms if tool_budget is not None else 0
+        if tool_budget is not None:
+            metrics["semantic_requests_total"] = core_requests + tool_requests
+            metrics["semantic_requests_by_stage"] = {
+                **(self.budget.requests_by_stage if self.budget is not None else {}),
+                **tool_budget.requests_by_stage,
+            }
+            metrics["semantic_time_ms_total"] = core_time_ms + tool_time_ms
+            metrics["semantic_time_ms_by_stage"] = {
+                **(self.budget.time_by_stage_ms if self.budget is not None else {}),
+                **tool_budget.time_by_stage_ms,
+            }
+            metrics["semantic_timeouts"] = (
+                (self.budget.requests_timed_out if self.budget is not None else 0)
+                + tool_budget.requests_timed_out
+            )
+            metrics["semantic_budget_exhausted"] = (
+                (self.budget.requests_skipped_budget if self.budget is not None else 0)
+                + tool_budget.requests_skipped_budget
+            )
+        metrics["core_governance_requests"] = core_requests
+        metrics["tool_semantics_requests"] = tool_requests
+        metrics["tool_semantics_budget_exhausted"] = getattr(
+            tool_semantics, "budget_exhausted", 0
+        )
+        metrics["tool_semantics_prepare_model_requests"] = getattr(
+            tool_semantics, "prepare_model_requests", 0
+        )
         metrics.update({
             "fast_path_alignment_hits": getattr(aligner, "fast_path_hits", 0),
             "alignment_candidates_considered": getattr(

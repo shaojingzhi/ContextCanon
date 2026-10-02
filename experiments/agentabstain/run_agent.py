@@ -36,6 +36,8 @@ CONDITIONS = ("baseline", "governed", "guard")
 EXTRACTORS = ("legacy", "llm")
 DEFAULT_SEMANTIC_MAX_OUTPUT_TOKENS = 256
 DEFAULT_SEMANTIC_EXTRACTION_MAX_OUTPUT_TOKENS = 1024
+TOOL_SEMANTICS_MAX_REQUESTS = 4
+TOOL_SEMANTICS_MAX_TOTAL_SECONDS = 10.0
 
 
 def _format_exception(stage: str, exc: BaseException) -> str:
@@ -152,11 +154,20 @@ async def run_one(args: argparse.Namespace, task: str, side: str) -> dict[str, A
     governance = None
     tool_semantics_resolver = None
     budget = None
+    tool_semantics_budget = None
     if args.extractor == "llm":
         api_key = os.environ.get("DEEPSEEK_API_KEY") or os.environ["OPENAI_API_KEY"]
         budget = SemanticBudget(
             max_requests=args.semantic_max_requests,
             max_total_seconds=args.semantic_max_total_seconds,
+            per_request_deadline_seconds=args.semantic_request_deadline_seconds,
+        )
+        tool_semantics_budget = SemanticBudget(
+            max_requests=TOOL_SEMANTICS_MAX_REQUESTS,
+            max_total_seconds=min(
+                TOOL_SEMANTICS_MAX_TOTAL_SECONDS,
+                args.semantic_max_total_seconds,
+            ),
             per_request_deadline_seconds=args.semantic_request_deadline_seconds,
         )
         extraction_client = OpenAICompatibleExtractionClient(
@@ -189,7 +200,11 @@ async def run_one(args: argparse.Namespace, task: str, side: str) -> dict[str, A
             model=args.model,
         )
         tool_semantics_resolver = LLMToolSemanticsResolver(
-            BudgetedSemanticClient(semantic_client, budget, "tool_semantics"),
+            BudgetedSemanticClient(
+                semantic_client,
+                tool_semantics_budget,
+                "tool_semantics",
+            ),
             model=args.model,
         )
         governance = RuntimeGovernance(

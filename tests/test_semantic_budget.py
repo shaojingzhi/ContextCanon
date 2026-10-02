@@ -130,6 +130,30 @@ class SemanticBudgetTests(unittest.TestCase):
         alignment = BudgetedSemanticClient(FakeSemanticClient(["two"]), budget, "alignment")
         self.assertIs(extraction.budget, alignment.budget)
 
+    def test_tool_semantics_budget_exhaustion_does_not_starve_extraction(self) -> None:
+        tool_budget = SemanticBudget(
+            max_requests=1,
+            max_total_seconds=10,
+            per_request_deadline_seconds=1,
+        )
+        core_budget = SemanticBudget(
+            max_requests=1,
+            max_total_seconds=10,
+            per_request_deadline_seconds=1,
+        )
+        tool_client = BudgetedSemanticClient(
+            FakeSemanticClient(["tool"]), tool_budget, "tool_semantics"
+        )
+        extraction_client = BudgetedSemanticClient(
+            FakeSemanticClient(["extraction"]), core_budget, "extraction"
+        )
+        self.assertEqual(tool_client.complete("", model="m"), "tool")
+        with self.assertRaises(SemanticDeadlineExceeded):
+            tool_client.complete("", model="m")
+        self.assertEqual(extraction_client.complete("", model="m"), "extraction")
+        self.assertEqual(tool_budget.requests_started, 1)
+        self.assertEqual(core_budget.requests_started, 1)
+
     def test_total_budget_is_checked_before_new_request(self) -> None:
         now = [0.0]
         budget = SemanticBudget(

@@ -13,6 +13,7 @@ from .semantic import (
     parse_semantic_response,
     sanitize_runtime_value,
 )
+from .semantic_budget import SemanticDeadlineExceeded
 
 
 class ToolSemantics(StrEnum):
@@ -96,21 +97,31 @@ class LLMToolSemanticsResolver:
         self._cache: dict[str, ToolSemantics] = {}
         self.cache_hits = 0
         self.cache_misses = 0
+        self.model_requests = 0
+        self.prepare_model_requests = 0
+        self.budget = getattr(client, "budget", None)
+        self.budget_exhausted = 0
 
     def prepare(self, tools: Mapping[str, Mapping[str, JSONValue]]) -> None:
-        """Prime the task-local cache from one tool-discovery snapshot.
+        """Cache only deterministic classifications from tool discovery.
 
-        Metadata-derived classifications are free.  Only unresolved tools use
-        the model, and each stable metadata identity is classified once.
+        Unresolved tools are deliberately left out of the cache.  Their first
+        real invocation is the point at which a bounded model classification
+        may be useful.
         """
         for name in sorted(tools):
             metadata = tools[name]
-            self.classify(
+            annotations = metadata.get("annotations")
+            explicit = _annotation_semantics(annotations)
+            if explicit is None:
+                continue
+            key = self._cache_key(
                 name,
-                description=metadata.get("description"),
-                input_schema=metadata.get("input_schema"),
-                annotations=metadata.get("annotations"),
+                metadata.get("description"),
+                metadata.get("input_schema"),
+                annotations,
             )
+            self._cache[key] = explicit
 
     @staticmethod
     def _cache_key(
@@ -134,13 +145,14 @@ class LLMToolSemanticsResolver:
         input_schema: JSONValue = None,
         annotations: JSONValue = None,
     ) -> ToolSemantics:
-        explicit = _annotation_semantics(annotations)
-        if explicit is not None:
-            return explicit
         key = self._cache_key(tool_name, description, input_schema, annotations)
         if key in self._cache:
             self.cache_hits += 1
             return self._cache[key]
+        explicit = _annotation_semantics(annotations)
+        if explicit is not None:
+            self._cache[key] = explicit
+            return explicit
         self.cache_misses += 1
         prompt = (
             "Classify only the operational semantics of this tool. Return JSON with "
@@ -161,6 +173,7 @@ class LLMToolSemanticsResolver:
             )
         )
         try:
+            self.model_requests += 1
             payload = parse_semantic_response(
                 self.client.complete(prompt, model=self.model)
             )
@@ -173,6 +186,11 @@ class LLMToolSemanticsResolver:
             result = ToolSemantics.UNKNOWN if confidence < self.minimum_confidence else semantics
             self._cache[key] = result
             return result
+        except SemanticDeadlineExceeded:
+            self.budget_exhausted += 1
+            self.diagnostics.append("tool_semantics_budget_exhausted")
+            self._cache[key] = ToolSemantics.UNKNOWN
+            return ToolSemantics.UNKNOWN
         except Exception as exc:
             self.diagnostics.append(f"tool_semantics_error:{type(exc).__name__}")
             self._cache[key] = ToolSemantics.UNKNOWN
