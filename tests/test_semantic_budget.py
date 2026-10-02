@@ -53,6 +53,17 @@ class SemanticBudgetTests(unittest.TestCase):
         self.assertEqual(len(client.prompts), 1)
         self.assertEqual(aligner.cache_hits, 1)
 
+    def test_distinct_dimensions_for_one_subject_use_fast_path(self) -> None:
+        client = FakeSemanticClient([])
+        aligner = LLMEvidenceAligner(client)
+        result = aligner.align(
+            _candidate("one", "a", "7:00 PM", dimension="time"),
+            FactDescriptor("Spring Gala", "venue", TemporalScope.CURRENT),
+        )
+
+        self.assertEqual(result.relation, FactAlignment.RELATED_BUT_DISTINCT)
+        self.assertEqual(client.prompts, [])
+
     def test_same_value_uses_relation_fast_path(self) -> None:
         client = FakeSemanticClient([])
         classifier = LLMRelationClassifier(client)

@@ -36,6 +36,19 @@ def _semantic_text(value: str) -> str:
     return re.sub(r"\s+", " ", value.strip()).casefold()
 
 
+def _semantic_tokens(value: str) -> set[str]:
+    return set(re.findall(r"[a-z0-9]+", _semantic_text(value)))
+
+
+def _likely_same_dimension(left: str, right: str) -> bool:
+    left_tokens = _semantic_tokens(left)
+    right_tokens = _semantic_tokens(right)
+    if left_tokens & right_tokens:
+        return True
+    temporal = {"date", "day", "time", "when", "scheduled", "occurs"}
+    return bool(left_tokens & temporal) and bool(right_tokens & temporal)
+
+
 def _value_key(value: JSONValue) -> str:
     return json.dumps(value, ensure_ascii=True, sort_keys=True, separators=(",", ":"))
 
@@ -222,6 +235,17 @@ class LLMEvidenceAligner:
     ) -> AlignmentResult:
         deterministic = ExactFactAligner().align(incoming, existing_fact)
         if deterministic.relation is FactAlignment.SAME_FACT:
+            self.fast_path_hits += 1
+            return deterministic
+        if (
+            deterministic.relation is FactAlignment.RELATED_BUT_DISTINCT
+            and _semantic_text(incoming.fact.subject)
+            == _semantic_text(existing_fact.subject)
+            and not _likely_same_dimension(
+                incoming.fact.semantic_dimension,
+                existing_fact.semantic_dimension,
+            )
+        ):
             self.fast_path_hits += 1
             return deterministic
         cache_key = (
