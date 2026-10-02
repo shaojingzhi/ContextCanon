@@ -189,6 +189,19 @@ class OpenWorldGovernanceTests(unittest.TestCase):
         result = aligner.align(incoming, existing)
         self.assertEqual(result.relation, FactAlignment.SAME_FACT)
 
+    def test_llm_aligner_recovers_safe_json_like_response(self) -> None:
+        client = FakeSemanticClient([
+            "{'relation': 'SAME_FACT', 'confidence': 0.94}",
+        ])
+        result = LLMEvidenceAligner(client).align(
+            _candidate(
+                "e2", "calendar-b", "2026-03-23",
+                dimension="the day on which the event takes place",
+            ),
+            FactDescriptor("Spring Gala", "scheduled date", TemporalScope.CURRENT),
+        )
+        self.assertEqual(result.relation, FactAlignment.SAME_FACT)
+
     def test_llm_aligner_low_confidence_is_unknown(self) -> None:
         client = FakeSemanticClient([
             {"relation": "SAME_FACT", "confidence": 0.4},
@@ -261,6 +274,16 @@ class OpenWorldGovernanceTests(unittest.TestCase):
             _candidate("python", "service-doc-a", "Python"),
         )
         self.assertEqual(relation, EvidenceRelation.COMPATIBLE)
+
+    def test_llm_relation_classifier_recovers_safe_json_like_response(self) -> None:
+        client = FakeSemanticClient([
+            "Result: {'relation': 'CONFLICTING', 'confidence': 0.94}",
+        ])
+        relation = LLMRelationClassifier(client).classify(
+            _candidate("e2", "calendar-b", "2026-03-23"),
+            _candidate("e1", "calendar-a", "2026-03-22"),
+        )
+        self.assertEqual(relation, EvidenceRelation.CONFLICTING)
 
     def test_llm_relation_classifier_low_confidence_is_unknown(self) -> None:
         client = FakeSemanticClient([

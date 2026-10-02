@@ -72,6 +72,46 @@ def _value_key(value: JSONValue) -> str:
     return json.dumps(value, ensure_ascii=True, sort_keys=True, separators=(",", ":"))
 
 
+def _parse_classifier_response(
+    response: object,
+    *,
+    field: str,
+    allowed: frozenset[str],
+) -> Mapping[str, object]:
+    """Parse a small classifier response, tolerating safe JSON-like wrappers.
+
+    Some compatible providers occasionally emit single-quoted objects or a
+    short prefix around the object despite ``response_format=json_object``.
+    Recovery is intentionally narrow: both the enum label and a numeric
+    confidence must be present and the label must be allow-listed.
+    """
+    try:
+        payload = parse_semantic_response(response)
+        if isinstance(payload, Mapping):
+            return payload
+    except Exception as original_error:
+        text = getattr(response, "content", response)
+        if not isinstance(text, str):
+            raise original_error
+        label = re.search(
+            rf"(?:[\"']?{re.escape(field)}[\"']?)\s*[:=]\s*[\"']?([A-Za-z_]+)",
+            text,
+            flags=re.IGNORECASE,
+        )
+        confidence = re.search(
+            r"(?:[\"']?confidence[\"']?)\s*[:=]\s*([01](?:\.\d+)?)",
+            text,
+            flags=re.IGNORECASE,
+        )
+        if label and confidence and label.group(1).upper() in allowed:
+            return {
+                field: label.group(1).upper(),
+                "confidence": float(confidence.group(1)),
+            }
+        raise original_error
+    raise ValueError("classifier response must be an object")
+
+
 def _parse_time(value: str | None) -> datetime | None:
     if value is None:
         return None
@@ -299,17 +339,19 @@ class LLMEvidenceAligner:
             )
         )
         try:
-            payload = parse_semantic_response(
-                self.client.complete(prompt, model=self.model)
+            payload = _parse_classifier_response(
+                self.client.complete(prompt, model=self.model),
+                field="relation",
+                allowed=frozenset(item.value for item in FactAlignment),
             )
-            if not isinstance(payload, Mapping):
-                raise ValueError("alignment response must be an object")
             relation = FactAlignment(str(payload.get("relation", "UNKNOWN")).upper())
             confidence = float(payload.get("confidence", 0.0))
             if not 0.0 <= confidence <= 1.0:
                 raise ValueError("alignment confidence is out of range")
             if confidence < self.minimum_confidence:
-                return AlignmentResult(FactAlignment.UNKNOWN, confidence)
+                result = AlignmentResult(FactAlignment.UNKNOWN, confidence)
+                self._cache[cache_key] = result
+                return result
             result = AlignmentResult(relation, confidence)
             self._cache[cache_key] = result
             return result
@@ -404,16 +446,17 @@ class LLMRelationClassifier:
             )
         )
         try:
-            payload = parse_semantic_response(
-                self.client.complete(prompt, model=self.model)
+            payload = _parse_classifier_response(
+                self.client.complete(prompt, model=self.model),
+                field="relation",
+                allowed=frozenset(item.value for item in EvidenceRelation),
             )
-            if not isinstance(payload, Mapping):
-                raise ValueError("relation response must be an object")
             relation = EvidenceRelation(str(payload.get("relation", "UNKNOWN")).upper())
             confidence = float(payload.get("confidence", 0.0))
             if not 0.0 <= confidence <= 1.0:
                 raise ValueError("relation confidence is out of range")
             if confidence < self.minimum_confidence:
+                self._cache[cache_key] = EvidenceRelation.UNKNOWN
                 return EvidenceRelation.UNKNOWN
             self._cache[cache_key] = relation
             return relation
