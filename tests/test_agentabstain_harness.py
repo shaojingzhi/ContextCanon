@@ -38,6 +38,35 @@ class ErrorMCP(FakeMCP):
 
 
 class HarnessBridgeTests(unittest.IsolatedAsyncioTestCase):
+    async def test_identical_runtime_observations_are_extracted_once(self) -> None:
+        calls = 0
+
+        class Extractor:
+            def extract(self, observation, context=None):
+                nonlocal calls
+                calls += 1
+                return []
+
+        governance = RuntimeGovernance(
+            extractor=Extractor(),
+            fact_need_extractor=object(),
+            store=GovernanceStore(),
+        )
+        first = RuntimeObservation(
+            "filesystem.read_file", "lookup", {"path": "/tmp/event.txt"},
+            {"content": "March 22, 2026"}, True, 0,
+        )
+        duplicate = RuntimeObservation(
+            "filesystem.read_file", "lookup", {"path": "/tmp/event.txt"},
+            {"content": "March 22, 2026"}, True, 7,
+        )
+
+        governance.observe(first)
+        governance.observe(duplicate)
+
+        self.assertEqual(calls, 1)
+        self.assertEqual(len(governance.observations), 2)
+
     async def test_generic_runtime_blocks_when_fact_need_extraction_fails(self) -> None:
         class EmptyExtractor:
             def extract(self, observation, context=None):

@@ -84,9 +84,34 @@ class RuntimeGovernance:
     budget: SemanticBudget | None = None
     tool_semantics_resolver: object | None = None
     observations: list[RuntimeObservation] = field(default_factory=list)
+    _observation_fingerprints: set[str] = field(default_factory=set, init=False, repr=False)
+
+    @staticmethod
+    def _observation_fingerprint(observation: RuntimeObservation) -> str:
+        """Identify identical runtime observations without using call order."""
+        payload = {
+            "tool_name": observation.tool_name,
+            "tool_kind": observation.tool_kind,
+            "tool_parameters": observation.tool_parameters,
+            "tool_result": observation.tool_result,
+            "success": observation.success,
+            "error": observation.error,
+        }
+        encoded = json.dumps(
+            payload,
+            ensure_ascii=True,
+            sort_keys=True,
+            separators=(",", ":"),
+            default=str,
+        )
+        return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
 
     def observe(self, observation: RuntimeObservation) -> list[EvidenceCandidate]:
         self.observations.append(observation)
+        fingerprint = self._observation_fingerprint(observation)
+        if fingerprint in self._observation_fingerprints:
+            return []
+        self._observation_fingerprints.add(fingerprint)
         ingested: list[EvidenceCandidate] = []
         for raw_candidate in self.extractor.extract(observation):
             candidate = normalize_candidate(raw_candidate)
