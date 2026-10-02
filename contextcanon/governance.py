@@ -30,6 +30,19 @@ from .semantic import (
 _MIN_SEMANTIC_CONFIDENCE = 0.7
 _ALIGNMENT_CANDIDATE_LIMIT = 8
 _RELATION_CANDIDATE_LIMIT = 8
+_GENERIC_DIMENSION_TOKENS = {
+    "a",
+    "an",
+    "and",
+    "event",
+    "fact",
+    "for",
+    "of",
+    "record",
+    "system",
+    "the",
+    "when",
+}
 
 
 def _semantic_text(value: str) -> str:
@@ -41,8 +54,8 @@ def _semantic_tokens(value: str) -> set[str]:
 
 
 def _likely_same_dimension(left: str, right: str) -> bool:
-    left_tokens = _semantic_tokens(left)
-    right_tokens = _semantic_tokens(right)
+    left_tokens = _semantic_tokens(left) - _GENERIC_DIMENSION_TOKENS
+    right_tokens = _semantic_tokens(right) - _GENERIC_DIMENSION_TOKENS
     if left_tokens & right_tokens:
         return True
     temporal_families = (
@@ -696,7 +709,17 @@ class GovernanceStore:
             if subject_tokens & set(_semantic_text(governed.fact.subject).split())
         ]
         if lexical_candidates:
-            return lexical_candidates[: self.alignment_candidate_limit]
+            dimension_candidates = [
+                governed
+                for governed in lexical_candidates
+                if _semantic_text(governed.fact.semantic_dimension)
+                == _semantic_text(fact.semantic_dimension)
+                or _likely_same_dimension(
+                    governed.fact.semantic_dimension,
+                    fact.semantic_dimension,
+                )
+            ]
+            return dimension_candidates[: self.alignment_candidate_limit]
         return list(reversed(self.facts))[: self.alignment_candidate_limit]
 
     def _now(self) -> datetime:

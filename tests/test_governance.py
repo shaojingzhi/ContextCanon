@@ -510,6 +510,37 @@ class OpenWorldGovernanceTests(unittest.TestCase):
         self.assertEqual(len(store.facts), 2)
         self.assertLessEqual(aligner.calls, 3)
 
+    def test_alignment_skips_unrelated_dimensions_for_same_subject(self) -> None:
+        class CountingAligner:
+            def __init__(self):
+                self.calls = 0
+
+            def align(self, incoming, existing_fact):
+                self.calls += 1
+                return AlignmentResult(FactAlignment.UNRELATED, 1.0)
+
+        aligner = CountingAligner()
+        store = GovernanceStore(aligner=aligner)
+        store.ingest(_candidate(
+            "date", "calendar", "2026-03-22",
+            dimension="event date",
+        ))
+        store.ingest(_candidate(
+            "time", "calendar", "7:00 PM",
+            dimension="event time",
+        ))
+        store.ingest(_candidate(
+            "venue", "calendar", "Riverside Community Hall",
+            dimension="event venue",
+        ))
+        calls_before_date = aligner.calls
+        store.ingest(_candidate(
+            "date-2", "event-system", "2026-03-23",
+            dimension="the date when the event takes place",
+        ))
+
+        self.assertEqual(aligner.calls - calls_before_date, 1)
+
     def test_unknown_alignment_does_not_aggressively_merge(self) -> None:
         class UnknownAligner:
             def align(self, incoming, existing_fact):
