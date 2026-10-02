@@ -538,7 +538,10 @@ class LLMStructuredExtractor:
             "or mismatch details are present, prioritize the expected and actual values for "
             "the mismatched fields. Otherwise prioritize primary domain facts. Do not extract "
             "file or transport metadata such as paths, media types, byte sizes, or record "
-            "timestamps unless the optional semantic hint explicitly requests them. Return "
+            "timestamps unless the optional semantic hint explicitly requests them. When a "
+            "structured record contains both a human-readable name/title and an opaque ID, "
+            "use the human-readable name/title as the entity for domain facts and keep the "
+            "ID as a separate property only when it is itself useful. Return "
             "an empty claims array when no useful fact is supported."
             + hint_text
             + "\nObservation:\n"

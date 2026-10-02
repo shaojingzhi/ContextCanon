@@ -244,6 +244,15 @@ class LLMEvidenceAligner:
             self.fast_path_hits += 1
             return deterministic
         if (
+            deterministic.relation is FactAlignment.UNKNOWN
+            and _semantic_text(incoming.fact.subject)
+            == _semantic_text(existing_fact.subject)
+            and _semantic_text(incoming.fact.semantic_dimension)
+            == _semantic_text(existing_fact.semantic_dimension)
+        ):
+            self.fast_path_hits += 1
+            return AlignmentResult(FactAlignment.SAME_FACT, 1.0)
+        if (
             deterministic.relation is FactAlignment.RELATED_BUT_DISTINCT
             and _semantic_text(incoming.fact.subject)
             == _semantic_text(existing_fact.subject)
@@ -337,6 +346,18 @@ class LLMRelationClassifier:
         if _value_key(incoming.value) == _value_key(existing.value):
             self.fast_path_hits += 1
             return EvidenceRelation.SUPPORTING
+        if (
+            _semantic_text(incoming.fact.subject)
+            == _semantic_text(existing.fact.subject)
+            and _semantic_text(incoming.fact.semantic_dimension)
+            == _semantic_text(existing.fact.semantic_dimension)
+            and (
+                incoming.fact.temporal_scope in {None, TemporalScope.UNKNOWN}
+                or existing.fact.temporal_scope in {None, TemporalScope.UNKNOWN}
+            )
+        ):
+            self.fast_path_hits += 1
+            return EvidenceRelation.CONFLICTING
         known_scopes = {None, TemporalScope.UNKNOWN}
         if (
             incoming.fact.temporal_scope != existing.fact.temporal_scope

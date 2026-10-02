@@ -248,6 +248,16 @@ class SemanticExtractionTests(unittest.TestCase):
         extractor.extract(observation, ExtractionContext("pair_id=secret"))
         prompt = captured[0].casefold()
         self.assertNotIn("gold_answer", prompt)
+
+    def test_prompt_prefers_human_readable_entity_over_opaque_id(self) -> None:
+        extractor = LLMStructuredExtractor(
+            FakeSemanticClient(lambda _prompt, _model: {"claims": []}),
+            model="m",
+        )
+        prompt = extractor.build_prompt(RuntimeObservation(
+            "tool.read", "lookup", {}, {"event_id": "evt_900", "name": "Spring Gala"}, True, 0,
+        ))
+        self.assertIn("human-readable name/title", prompt)
         self.assertNotIn("should_act", prompt)
         self.assertNotIn("pair_id=secret", prompt)
 
