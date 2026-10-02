@@ -6,6 +6,7 @@ errors. It deliberately does not know task labels or evaluator metadata.
 
 from __future__ import annotations
 
+import asyncio
 import json
 from dataclasses import dataclass
 from typing import Any, Awaitable, Callable, Mapping
@@ -200,7 +201,10 @@ class RuntimeMCPBridge:
             self.diagnostics.commit_attempted = True
             proposed = ProposedToolCall(tool_name, kind, arguments)
             if self.governance is not None:
-                action_result = self.governance.evaluate_action(proposed)
+                action_result = await asyncio.to_thread(
+                    self.governance.evaluate_action,
+                    proposed,
+                )
                 decision = (
                     GuardDecision.ALLOW
                     if action_result.decision is ActionGovernanceDecision.ALLOW
@@ -228,7 +232,8 @@ class RuntimeMCPBridge:
                 result = await self._call_tool(tool_name, arguments, meta=meta)
         except Exception as exc:
             if kind in {"lookup", "verify"} and self.condition != "baseline":
-                self._record_observation(
+                await asyncio.to_thread(
+                    self._record_observation,
                     tool_name,
                     kind,
                     arguments,
@@ -240,7 +245,8 @@ class RuntimeMCPBridge:
 
         result_is_error = _result_is_error(result)
         if kind in {"lookup", "verify"} and self.condition != "baseline":
-            self._record_observation(
+            await asyncio.to_thread(
+                self._record_observation,
                 tool_name,
                 kind,
                 arguments,

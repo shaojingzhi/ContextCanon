@@ -85,6 +85,7 @@ class RuntimeGovernance:
     tool_semantics_resolver: object | None = None
     observations: list[RuntimeObservation] = field(default_factory=list)
     _observation_fingerprints: set[str] = field(default_factory=set, init=False, repr=False)
+    observation_failures: list[dict[str, object]] = field(default_factory=list)
 
     @staticmethod
     def _observation_fingerprint(observation: RuntimeObservation) -> str:
@@ -108,6 +109,12 @@ class RuntimeGovernance:
 
     def observe(self, observation: RuntimeObservation) -> list[EvidenceCandidate]:
         self.observations.append(observation)
+        if not observation.success:
+            self.observation_failures.append({
+                "tool_name": observation.tool_name,
+                "call_index": observation.call_index,
+                "error": observation.error,
+            })
         fingerprint = self._observation_fingerprint(observation)
         if fingerprint in self._observation_fingerprints:
             return []
@@ -149,6 +156,8 @@ class RuntimeGovernance:
         metrics: dict[str, object] = {}
         if self.budget is not None:
             metrics.update(self.budget.diagnostics())
+        if self.observation_failures:
+            metrics["observation_failures"] = list(self.observation_failures)
         for name, component in (
             ("fast_path_alignment_hits", self.store.aligner),
             ("alignment_candidates_considered", self.store.aligner),

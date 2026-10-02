@@ -119,10 +119,12 @@ class _operation_deadline:
         self.enabled = False
 
     def __enter__(self) -> None:
-        # setitimer interrupts the operation itself; unlike a worker-thread
-        # timeout, it cannot leave a blocked semantic request running behind.
+        # setitimer interrupts the operation itself on the main thread.  Live
+        # MCP bridges run synchronous semantic clients in worker threads so
+        # they do not block the async tool loop; those clients provide their
+        # own transport timeout, so there is no safe process-wide timer to set.
         if threading.current_thread() is not threading.main_thread() or not hasattr(signal, "setitimer"):
-            raise SemanticDeadlineExceeded("hard semantic deadline unavailable outside main thread")
+            return
         self.previous_handler = signal.getsignal(signal.SIGALRM)
 
         def _raise_deadline(_signum: int, _frame: object) -> None:
