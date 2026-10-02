@@ -45,8 +45,14 @@ def _likely_same_dimension(left: str, right: str) -> bool:
     right_tokens = _semantic_tokens(right)
     if left_tokens & right_tokens:
         return True
-    temporal = {"date", "day", "time", "when", "scheduled", "occurs"}
-    return bool(left_tokens & temporal) and bool(right_tokens & temporal)
+    temporal_families = (
+        {"date", "day", "when", "scheduled", "occurs"},
+        {"time", "hour", "clock"},
+    )
+    return any(
+        bool(left_tokens & family) and bool(right_tokens & family)
+        for family in temporal_families
+    )
 
 
 def _value_key(value: JSONValue) -> str:
