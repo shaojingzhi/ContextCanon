@@ -337,12 +337,18 @@ class LLMRelationClassifier:
         self.minimum_confidence = minimum_confidence
         self.diagnostics: list[str] = []
         self.fast_path_hits = 0
+        self.cache_hits = 0
+        self._cache: dict[tuple[str, str], EvidenceRelation] = {}
 
     def classify(
         self,
         incoming: EvidenceCandidate,
         existing: EvidenceCandidate,
     ) -> EvidenceRelation:
+        cache_key = (
+            json.dumps(_evidence_payload(existing), sort_keys=True, separators=(",", ":")),
+            json.dumps(_evidence_payload(incoming), sort_keys=True, separators=(",", ":")),
+        )
         if _value_key(incoming.value) == _value_key(existing.value):
             self.fast_path_hits += 1
             return EvidenceRelation.SUPPORTING
@@ -366,6 +372,10 @@ class LLMRelationClassifier:
         ):
             self.fast_path_hits += 1
             return EvidenceRelation.COMPATIBLE
+        cached = self._cache.get(cache_key)
+        if cached is not None:
+            self.cache_hits += 1
+            return cached
         prompt = (
             "Classify only the semantic relation between two evidence items already aligned "
             "to one fact. Do not choose truth, set governance state, or authorize an action. "
@@ -392,9 +402,11 @@ class LLMRelationClassifier:
                 raise ValueError("relation confidence is out of range")
             if confidence < self.minimum_confidence:
                 return EvidenceRelation.UNKNOWN
+            self._cache[cache_key] = relation
             return relation
         except Exception as exc:
             self.diagnostics.append(f"relation_error:{type(exc).__name__}")
+            self._cache[cache_key] = EvidenceRelation.UNKNOWN
             return EvidenceRelation.UNKNOWN
 
 

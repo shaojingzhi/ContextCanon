@@ -17,7 +17,12 @@ from contextcanon.governance import (
     FactNeedExtractor,
     GovernanceStore,
 )
-from contextcanon.semantic import ClaimCandidate, SemanticExtractor, normalize_candidate
+from contextcanon.semantic import (
+    ClaimCandidate,
+    ExtractionContext,
+    SemanticExtractor,
+    normalize_candidate,
+)
 from contextcanon.semantic_budget import SemanticBudget
 
 from .adapter import ProposedToolCall, RuntimeObservation
@@ -85,6 +90,7 @@ class RuntimeGovernance:
     tool_semantics_resolver: object | None = None
     observations: list[RuntimeObservation] = field(default_factory=list)
     _observation_fingerprints: set[str] = field(default_factory=set, init=False, repr=False)
+    _materialized_fingerprints: set[str] = field(default_factory=set, init=False, repr=False)
     observation_failures: list[dict[str, object]] = field(default_factory=list)
 
     @staticmethod
@@ -107,7 +113,8 @@ class RuntimeGovernance:
         )
         return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
 
-    def observe(self, observation: RuntimeObservation) -> list[EvidenceCandidate]:
+    def capture_observation(self, observation: RuntimeObservation) -> tuple[str, bool]:
+        """Preserve a raw observation before any semantic work is attempted."""
         self.observations.append(observation)
         if not observation.success:
             self.observation_failures.append({
@@ -117,10 +124,40 @@ class RuntimeGovernance:
             })
         fingerprint = self._observation_fingerprint(observation)
         if fingerprint in self._observation_fingerprints:
-            return []
+            return fingerprint, False
         self._observation_fingerprints.add(fingerprint)
+        return fingerprint, True
+
+    @staticmethod
+    def _semantic_hint(needs: tuple[FactNeed, ...] | None) -> str | None:
+        if not needs:
+            return None
+        return "; ".join(
+            f"{need.subject_hint} / {need.semantic_dimension}"
+            for need in needs
+        )
+
+    def materialize_observation(
+        self,
+        observation: RuntimeObservation,
+        *,
+        needs: tuple[FactNeed, ...] | None = None,
+    ) -> list[EvidenceCandidate]:
+        """Turn one preserved observation into governed evidence.
+
+        This method is intentionally separate from capture so callers can run
+        it in a task-local worker and keep the MCP read path responsive.
+        """
+        fingerprint = self._observation_fingerprint(observation)
+        if fingerprint in self._materialized_fingerprints:
+            return []
+        self._materialized_fingerprints.add(fingerprint)
         ingested: list[EvidenceCandidate] = []
-        for raw_candidate in self.extractor.extract(observation):
+        semantic_hint = self._semantic_hint(needs)
+        if semantic_hint is None and isinstance(self.action_context, str):
+            semantic_hint = self.action_context
+        context = ExtractionContext(semantic_hint)
+        for raw_candidate in self.extractor.extract(observation, context):
             candidate = normalize_candidate(raw_candidate)
             if candidate is None:
                 continue
@@ -129,14 +166,23 @@ class RuntimeGovernance:
             ingested.append(evidence_candidate)
         return ingested
 
-    def evaluate_action(self, proposed: ProposedToolCall) -> ActionGovernanceResult:
-        if self.budget is not None and self.budget.governance_incomplete:
-            return ActionGovernanceResult(ActionGovernanceDecision.REQUIRE_CLARIFICATION)
-        extraction = self.fact_need_extractor.extract_for_action(ActionRequest(
+    def observe(self, observation: RuntimeObservation) -> list[EvidenceCandidate]:
+        """Compatibility helper for synchronous callers and unit tests."""
+        _fingerprint, is_new = self.capture_observation(observation)
+        if not is_new:
+            return []
+        return self.materialize_observation(observation)
+
+    def extract_action_needs(self, proposed: ProposedToolCall) -> FactNeedExtractionResult:
+        return self.fact_need_extractor.extract_for_action(ActionRequest(
             proposed.tool_name,
             proposed.parameters,
             context=self.action_context,
         ))
+
+    def evaluate_needs(self, extraction: FactNeedExtractionResult) -> ActionGovernanceResult:
+        if self.budget is not None and self.budget.governance_incomplete:
+            return ActionGovernanceResult(ActionGovernanceDecision.REQUIRE_CLARIFICATION)
         if (
             extraction.assessment is DependencyAssessment.NO_DEPENDENCIES
             and not extraction.needs
@@ -147,9 +193,12 @@ class RuntimeGovernance:
             and extraction.needs
         ):
             return self.store.evaluate_action(list(extraction.needs))
-        return ActionGovernanceResult(
-            ActionGovernanceDecision.REQUIRE_CLARIFICATION
-        )
+        return ActionGovernanceResult(ActionGovernanceDecision.REQUIRE_CLARIFICATION)
+
+    def evaluate_action(self, proposed: ProposedToolCall) -> ActionGovernanceResult:
+        if self.budget is not None and self.budget.governance_incomplete:
+            return ActionGovernanceResult(ActionGovernanceDecision.REQUIRE_CLARIFICATION)
+        return self.evaluate_needs(self.extract_action_needs(proposed))
 
     @property
     def metrics(self) -> dict[str, object]:
@@ -158,15 +207,23 @@ class RuntimeGovernance:
             metrics.update(self.budget.diagnostics())
         if self.observation_failures:
             metrics["observation_failures"] = list(self.observation_failures)
-        for name, component in (
-            ("fast_path_alignment_hits", self.store.aligner),
-            ("alignment_cache_hits", self.store.aligner),
-            ("alignment_candidates_considered", self.store.aligner),
-            ("fast_path_relation_hits", self.store.relation_classifier),
-            ("tool_semantics_cache_hits", getattr(self, "tool_semantics_resolver", None)),
-        ):
-            if component is not None and hasattr(component, name):
-                metrics[name] = getattr(component, name)
+        aligner = self.store.aligner
+        relation = self.store.relation_classifier
+        tool_semantics = self.tool_semantics_resolver
+        metrics.update({
+            "fast_path_alignment_hits": getattr(aligner, "fast_path_hits", 0),
+            "alignment_candidates_considered": getattr(
+                aligner, "alignment_candidates_considered", 0
+            ),
+            "fast_path_relation_hits": getattr(relation, "fast_path_hits", 0),
+            "tool_semantics_cache_hits": getattr(tool_semantics, "cache_hits", 0),
+            "tool_semantics_cache_misses": getattr(tool_semantics, "cache_misses", 0),
+            "semantic_cache_hits_by_stage": {
+                "alignment": getattr(aligner, "cache_hits", 0),
+                "relation": getattr(relation, "cache_hits", 0),
+                "tool_semantics": getattr(tool_semantics, "cache_hits", 0),
+            },
+        })
         return metrics
 
     def render(self) -> str:

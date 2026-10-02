@@ -120,6 +120,7 @@ def build_contextcanon_server_class(agentabstain_repo: str | Path):
                     "annotations": getattr(tool, "annotations", None),
                 }
             self._contextcanon_tool_metadata = metadata
+            await self._contextcanon_bridge.prepare_tool_semantics(metadata)
             return tools
 
         async def call_runtime_control_tool(

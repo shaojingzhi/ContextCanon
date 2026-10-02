@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import unittest
+import time
 
 from contextcanon.core import EvidenceRelation, FactAlignment, TemporalScope
 from contextcanon.governance import (
@@ -38,6 +39,176 @@ class ErrorMCP(FakeMCP):
 
 
 class HarnessBridgeTests(unittest.IsolatedAsyncioTestCase):
+    @staticmethod
+    def _candidate_for_observation(observation, value):
+        return ClaimCandidate(
+            entity="Spring Gala",
+            property="event date",
+            value=value,
+            value_type="date",
+            role="OBSERVED",
+            confidence=0.95,
+            provenance=Provenance(
+                f"observation-{observation.call_index}",
+                observation.tool_name,
+                observation.tool_parameters,
+                "date",
+                value,
+            ),
+            temporal_scope=TemporalScope.CURRENT.value,
+        )
+
+    async def test_read_returns_before_slow_background_governance_finishes(self) -> None:
+        class SlowExtractor:
+            def extract(self, observation, context=None):
+                time.sleep(0.12)
+                return [HarnessBridgeTests._candidate_for_observation(
+                    observation, "2026-03-22"
+                )]
+
+        class NoNeedExtractor:
+            def extract_for_action(self, action):
+                return FactNeedExtractionResult(DependencyAssessment.NO_DEPENDENCIES)
+
+        fake = FakeMCP()
+        governance = RuntimeGovernance(
+            extractor=SlowExtractor(),
+            fact_need_extractor=NoNeedExtractor(),
+            store=GovernanceStore(),
+        )
+        bridge = RuntimeMCPBridge(
+            fake.call_tool,
+            {"source.read": "lookup"},
+            condition="guard",
+            governance=governance,
+        )
+        started = time.monotonic()
+        await bridge.call_tool("source.read", {})
+        elapsed = time.monotonic() - started
+        self.assertLess(elapsed, 0.10)
+        self.assertEqual(len(governance.observations), 1)
+        self.assertEqual(governance.store.facts, [])
+        await bridge.drain_governance()
+        self.assertEqual(len(governance.store.facts), 1)
+        self.assertEqual(bridge.governance_work[0].state.value, "COMPLETE")
+
+    async def test_side_effect_waits_for_pending_relevant_governance(self) -> None:
+        class SlowExtractor:
+            def extract(self, observation, context=None):
+                time.sleep(0.04)
+                return [HarnessBridgeTests._candidate_for_observation(
+                    observation, observation.tool_result["date"]
+                )]
+
+        class NeedExtractor:
+            def extract_for_action(self, action):
+                return FactNeedExtractionResult(
+                    DependencyAssessment.HAS_DEPENDENCIES,
+                    (FactNeed("Spring Gala", "event date", "date", TemporalScope.CURRENT),),
+                )
+
+        class ConflictingClassifier:
+            def classify(self, incoming, existing):
+                return EvidenceRelation.CONFLICTING
+
+        async def call_tool(name: str, arguments: dict):
+            if name == "side.effect":
+                self.fail("conflicting action must not dispatch")
+            return {"result": {"date": arguments["date"]}}
+
+        governance = RuntimeGovernance(
+            extractor=SlowExtractor(),
+            fact_need_extractor=NeedExtractor(),
+            store=GovernanceStore(relation_classifier=ConflictingClassifier()),
+        )
+        bridge = RuntimeMCPBridge(
+            call_tool,
+            {"source.read": "lookup", "side.effect": "commit"},
+            condition="guard",
+            governance=governance,
+            governance_barrier_timeout_seconds=0.5,
+        )
+        await bridge.call_tool("source.read", {"date": "2026-03-22"})
+        await bridge.call_tool("source.read", {"date": "2026-03-23"})
+        result = await bridge.call_tool("side.effect", {})
+        self.assertEqual(bridge.diagnostics.guard_decision, "REQUIRE_CLARIFICATION")
+        self.assertEqual(bridge.diagnostics.commit_dispatched, False)
+        self.assertGreater(bridge.diagnostics.governance_barrier_wait_ms, 0)
+        self.assertIn("Clarification is required", result["structuredContent"]["message"])
+
+    async def test_barrier_timeout_fails_closed(self) -> None:
+        class SlowExtractor:
+            def extract(self, observation, context=None):
+                time.sleep(0.2)
+                return []
+
+        class NeedExtractor:
+            def extract_for_action(self, action):
+                return FactNeedExtractionResult(
+                    DependencyAssessment.HAS_DEPENDENCIES,
+                    (FactNeed("Spring Gala", "event date"),),
+                )
+
+        dispatched: list[str] = []
+
+        async def call_tool(name: str, arguments: dict):
+            dispatched.append(name)
+            return {"result": {"ok": True}}
+
+        governance = RuntimeGovernance(
+            extractor=SlowExtractor(),
+            fact_need_extractor=NeedExtractor(),
+            store=GovernanceStore(),
+        )
+        bridge = RuntimeMCPBridge(
+            call_tool,
+            {"source.read": "lookup", "side.effect": "commit"},
+            condition="guard",
+            governance=governance,
+            governance_barrier_timeout_seconds=0.01,
+        )
+        await bridge.call_tool("source.read", {})
+        result = await bridge.call_tool("side.effect", {})
+        self.assertEqual(dispatched, ["source.read"])
+        self.assertEqual(bridge.diagnostics.guard_decision, "REQUIRE_CLARIFICATION")
+        self.assertIn("Clarification is required", result["structuredContent"]["message"])
+        await bridge.drain_governance()
+
+    async def test_background_governance_exception_is_not_allowed(self) -> None:
+        class BrokenExtractor:
+            def extract(self, observation, context=None):
+                raise RuntimeError("semantic failure")
+
+        class NeedExtractor:
+            def extract_for_action(self, action):
+                return FactNeedExtractionResult(
+                    DependencyAssessment.HAS_DEPENDENCIES,
+                    (FactNeed("Spring Gala", "event date"),),
+                )
+
+        dispatched: list[str] = []
+
+        async def call_tool(name: str, arguments: dict):
+            dispatched.append(name)
+            return {"result": {"ok": True}}
+
+        governance = RuntimeGovernance(
+            extractor=BrokenExtractor(),
+            fact_need_extractor=NeedExtractor(),
+            store=GovernanceStore(),
+        )
+        bridge = RuntimeMCPBridge(
+            call_tool,
+            {"source.read": "lookup", "side.effect": "commit"},
+            condition="guard",
+            governance=governance,
+        )
+        await bridge.call_tool("source.read", {})
+        result = await bridge.call_tool("side.effect", {})
+        self.assertEqual(dispatched, ["source.read"])
+        self.assertEqual(bridge.diagnostics.background_governance_failures, 1)
+        self.assertEqual(bridge.diagnostics.guard_decision, "REQUIRE_CLARIFICATION")
+        self.assertIn("Clarification is required", result["structuredContent"]["message"])
     async def test_identical_runtime_observations_are_extracted_once(self) -> None:
         calls = 0
 

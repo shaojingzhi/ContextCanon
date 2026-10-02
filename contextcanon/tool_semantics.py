@@ -33,6 +33,10 @@ class ToolSemanticsResolver(Protocol):
     ) -> ToolSemantics:
         ...
 
+    def prepare(self, tools: Mapping[str, Mapping[str, JSONValue]]) -> None:
+        """Resolve stable tool metadata before normal calls begin."""
+        ...
+
 
 class StaticToolSemanticsResolver:
     """Explicit compatibility mapping for environments with known tool metadata."""
@@ -50,6 +54,10 @@ class StaticToolSemanticsResolver:
     ) -> ToolSemantics:
         return self.semantics.get(tool_name, ToolSemantics.UNKNOWN)
 
+    def prepare(self, tools: Mapping[str, Mapping[str, JSONValue]]) -> None:
+        """Static mappings need no discovery-time work."""
+        return None
+
 
 def _annotation_semantics(annotations: JSONValue) -> ToolSemantics | None:
     if not isinstance(annotations, Mapping):
@@ -63,6 +71,11 @@ def _annotation_semantics(annotations: JSONValue) -> ToolSemantics | None:
     read_only = annotations.get("readOnlyHint", annotations.get("read_only_hint"))
     if read_only is True:
         return ToolSemantics.READ
+    destructive = annotations.get(
+        "destructiveHint", annotations.get("destructive_hint")
+    )
+    if destructive is True:
+        return ToolSemantics.SIDE_EFFECT
     return None
 
 
@@ -83,6 +96,21 @@ class LLMToolSemanticsResolver:
         self._cache: dict[str, ToolSemantics] = {}
         self.cache_hits = 0
         self.cache_misses = 0
+
+    def prepare(self, tools: Mapping[str, Mapping[str, JSONValue]]) -> None:
+        """Prime the task-local cache from one tool-discovery snapshot.
+
+        Metadata-derived classifications are free.  Only unresolved tools use
+        the model, and each stable metadata identity is classified once.
+        """
+        for name in sorted(tools):
+            metadata = tools[name]
+            self.classify(
+                name,
+                description=metadata.get("description"),
+                input_schema=metadata.get("input_schema"),
+                annotations=metadata.get("annotations"),
+            )
 
     @staticmethod
     def _cache_key(

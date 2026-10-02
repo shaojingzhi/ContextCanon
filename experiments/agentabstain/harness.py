@@ -8,10 +8,16 @@ from __future__ import annotations
 
 import asyncio
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from enum import StrEnum
+from time import monotonic
 from typing import Any, Awaitable, Callable, Mapping
 
-from contextcanon.governance import ActionGovernanceDecision
+from contextcanon.governance import (
+    ActionGovernanceDecision,
+    ActionGovernanceResult,
+    FactNeed,
+)
 from contextcanon.semantic import SemanticExtractor
 from contextcanon.tool_semantics import (
     StaticToolSemanticsResolver,
@@ -108,6 +114,14 @@ class BridgeDiagnostics:
     commit_attempted: bool = False
     guard_decision: str | None = None
     commit_dispatched: bool = False
+    raw_tool_latency_ms: int = 0
+    governance_background_time_ms: int = 0
+    governance_barrier_wait_ms: int = 0
+    time_to_return_read_tool_ms: int = 0
+    time_to_side_effect_decision_ms: int = 0
+    pending_governance_count: int = 0
+    background_governance_failures: int = 0
+    background_governance_errors: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -117,7 +131,29 @@ class BridgeDiagnostics:
             "commit_attempted": self.commit_attempted,
             "guard_decision": self.guard_decision,
             "commit_dispatched": self.commit_dispatched,
+            "raw_tool_latency_ms": self.raw_tool_latency_ms,
+            "governance_background_time_ms": self.governance_background_time_ms,
+            "governance_barrier_wait_ms": self.governance_barrier_wait_ms,
+            "time_to_return_read_tool_ms": self.time_to_return_read_tool_ms,
+            "time_to_side_effect_decision_ms": self.time_to_side_effect_decision_ms,
+            "pending_governance_count": self.pending_governance_count,
+            "background_governance_failures": self.background_governance_failures,
+            "background_governance_errors": list(self.background_governance_errors),
         }
+
+
+class GovernanceWorkState(StrEnum):
+    PENDING = "PENDING"
+    COMPLETE = "COMPLETE"
+    FAILED = "FAILED"
+
+
+@dataclass(slots=True)
+class GovernanceWork:
+    observation: RuntimeObservation
+    state: GovernanceWorkState = GovernanceWorkState.PENDING
+    task: asyncio.Task[None] | None = None
+    error: str | None = None
 
 
 class RuntimeMCPBridge:
@@ -132,6 +168,7 @@ class RuntimeMCPBridge:
         adapter: AgentAbstainAdapter | None = None,
         extractor: SemanticExtractor | None = None,
         governance: RuntimeGovernance | None = None,
+        governance_barrier_timeout_seconds: float = 5.0,
     ) -> None:
         if condition not in {"baseline", "governed", "guard"}:
             raise ValueError("condition must be baseline, governed, or guard")
@@ -158,6 +195,30 @@ class RuntimeMCPBridge:
         )
         self.call_index = 0
         self.diagnostics = BridgeDiagnostics()
+        if governance_barrier_timeout_seconds <= 0:
+            raise ValueError("governance barrier timeout must be positive")
+        self.governance_barrier_timeout_seconds = governance_barrier_timeout_seconds
+        self._governance_lock = asyncio.Lock()
+        self._governance_work: list[GovernanceWork] = []
+
+    async def prepare_tool_semantics(
+        self,
+        metadata: Mapping[str, Mapping[str, Any]],
+    ) -> None:
+        """Prime stable tool classifications during discovery, not invocation."""
+        if self.condition == "baseline":
+            return
+        prepare = getattr(self.tool_semantics_resolver, "prepare", None)
+        if prepare is not None:
+            safe_metadata = {
+                name: {
+                    "description": values.get("description"),
+                    "input_schema": _json_safe(values.get("input_schema")),
+                    "annotations": _json_safe(values.get("annotations")),
+                }
+                for name, values in metadata.items()
+            }
+            await asyncio.to_thread(prepare, safe_metadata)
 
     async def call_tool(
         self,
@@ -169,17 +230,18 @@ class RuntimeMCPBridge:
         input_schema: Any = None,
         annotations: Any = None,
     ) -> Any:
+        call_started = monotonic()
         arguments = arguments or {}
-        semantics = (
-            ToolSemantics.UNKNOWN
-            if self.condition == "baseline"
-            else self.tool_semantics_resolver.classify(
+        if self.condition == "baseline":
+            semantics = ToolSemantics.UNKNOWN
+        else:
+            semantics = await asyncio.to_thread(
+                self.tool_semantics_resolver.classify,
                 tool_name,
                 description=tool_description,
                 input_schema=_json_safe(input_schema),
                 annotations=_json_safe(annotations),
             )
-        )
         kind = {
             ToolSemantics.READ: "lookup",
             ToolSemantics.VERIFY: "verify",
@@ -198,13 +260,11 @@ class RuntimeMCPBridge:
                 },
             }
         if semantics is ToolSemantics.SIDE_EFFECT:
+            decision_started = monotonic()
             self.diagnostics.commit_attempted = True
             proposed = ProposedToolCall(tool_name, kind, arguments)
             if self.governance is not None:
-                action_result = await asyncio.to_thread(
-                    self.governance.evaluate_action,
-                    proposed,
-                )
+                action_result = await self._evaluate_governed_action(proposed)
                 decision = (
                     GuardDecision.ALLOW
                     if action_result.decision is ActionGovernanceDecision.ALLOW
@@ -213,6 +273,9 @@ class RuntimeMCPBridge:
             else:
                 assert self.adapter is not None
                 decision = self.adapter.evaluate_proposed_commit(proposed)
+            self.diagnostics.time_to_side_effect_decision_ms += round(
+                (monotonic() - decision_started) * 1000
+            )
             self.diagnostics.guard_decision = decision.value
             if self.condition == "guard" and decision is GuardDecision.REQUIRE_CLARIFICATION:
                 return {
@@ -225,6 +288,7 @@ class RuntimeMCPBridge:
                     },
                 }
 
+        dispatch_started = monotonic()
         try:
             if meta is None:
                 result = await self._call_tool(tool_name, arguments)
@@ -232,8 +296,7 @@ class RuntimeMCPBridge:
                 result = await self._call_tool(tool_name, arguments, meta=meta)
         except Exception as exc:
             if kind in {"lookup", "verify"} and self.condition != "baseline":
-                await asyncio.to_thread(
-                    self._record_observation,
+                self._capture_observation(
                     tool_name,
                     kind,
                     arguments,
@@ -242,11 +305,14 @@ class RuntimeMCPBridge:
                     error=str(exc),
                 )
             raise
+        finally:
+            self.diagnostics.raw_tool_latency_ms += round(
+                (monotonic() - dispatch_started) * 1000
+            )
 
         result_is_error = _result_is_error(result)
         if kind in {"lookup", "verify"} and self.condition != "baseline":
-            await asyncio.to_thread(
-                self._record_observation,
+            self._capture_observation(
                 tool_name,
                 kind,
                 arguments,
@@ -259,11 +325,14 @@ class RuntimeMCPBridge:
                     result,
                     self.governed_evidence(),
                 )
+            self.diagnostics.time_to_return_read_tool_ms += round(
+                (monotonic() - call_started) * 1000
+            )
         if semantics is ToolSemantics.SIDE_EFFECT:
             self.diagnostics.commit_dispatched = True
         return result
 
-    def _record_observation(
+    def _capture_observation(
         self,
         tool_name: str,
         tool_kind: str,
@@ -284,8 +353,17 @@ class RuntimeMCPBridge:
             error=error,
         )
         if self.governance is not None:
-            claims = self.governance.observe(observation)
+            _fingerprint, is_new = self.governance.capture_observation(observation)
+            claims: list[Any] = []
             conflicts = self.governance.conflicts_detected
+            if is_new:
+                work = GovernanceWork(observation)
+                self._governance_work.append(work)
+                self.diagnostics.pending_governance_count = sum(
+                    item.state is GovernanceWorkState.PENDING
+                    for item in self._governance_work
+                )
+                work.task = asyncio.create_task(self._process_governance(work))
         else:
             assert self.adapter is not None
             claims = self.adapter.observe_tool_result(observation)
@@ -293,6 +371,119 @@ class RuntimeMCPBridge:
         self.diagnostics.claims_created += len(claims)
         self.diagnostics.conflicts_detected = conflicts
         self.call_index += 1
+
+    async def _process_governance(self, work: GovernanceWork) -> None:
+        started = monotonic()
+        try:
+            async with self._governance_lock:
+                assert self.governance is not None
+                claims = await asyncio.to_thread(
+                    self.governance.materialize_observation,
+                    work.observation,
+                )
+                self.diagnostics.claims_created += len(claims)
+                self.diagnostics.conflicts_detected = (
+                    self.governance.conflicts_detected
+                )
+            work.state = GovernanceWorkState.COMPLETE
+        except Exception as exc:
+            work.state = GovernanceWorkState.FAILED
+            work.error = f"{type(exc).__name__}: {exc}"
+            if self.governance is not None and self.governance.budget is not None:
+                self.governance.budget.governance_incomplete = True
+            self.diagnostics.background_governance_failures += 1
+            self.diagnostics.background_governance_errors.append(work.error)
+        finally:
+            self.diagnostics.governance_background_time_ms += round(
+                (monotonic() - started) * 1000
+            )
+            self.diagnostics.pending_governance_count = sum(
+                item.state is GovernanceWorkState.PENDING
+                for item in self._governance_work
+            )
+
+    async def _evaluate_governed_action(
+        self,
+        proposed: ProposedToolCall,
+    ) -> ActionGovernanceResult:
+        """Evaluate one action within a single strict barrier deadline."""
+        assert self.governance is not None
+        deadline = monotonic() + self.governance_barrier_timeout_seconds
+
+        def remaining() -> float:
+            return max(0.0, deadline - monotonic())
+
+        try:
+            extraction = await asyncio.wait_for(
+                asyncio.to_thread(self.governance.extract_action_needs, proposed),
+                timeout=remaining(),
+            )
+            barrier_ok = await self._await_governance_barrier(
+                extraction.needs,
+                timeout=remaining(),
+            )
+            if not barrier_ok or remaining() <= 0:
+                raise TimeoutError
+            return await asyncio.wait_for(
+                asyncio.to_thread(self.governance.evaluate_needs, extraction),
+                timeout=remaining(),
+            )
+        except TimeoutError:
+            return ActionGovernanceResult(
+                ActionGovernanceDecision.REQUIRE_CLARIFICATION
+            )
+
+    async def _await_governance_barrier(
+        self,
+        needs: tuple[FactNeed, ...],
+        *,
+        timeout: float,
+    ) -> bool:
+        """Wait for possibly relevant task-local work, bounded and fail closed.
+
+        Raw observations are intentionally untyped until extraction completes.
+        Until a work item can be proven irrelevant, it is relevant to the
+        barrier.  This conservative rule prevents a pending conflicting value
+        from being skipped merely because its wording differs from a FactNeed.
+        """
+        if not needs:
+            return not any(
+                item.state is GovernanceWorkState.FAILED
+                for item in self._governance_work
+            )
+        relevant = [
+            item for item in self._governance_work
+            if item.state is GovernanceWorkState.PENDING
+        ]
+        if not relevant:
+            return not any(
+                item.state is GovernanceWorkState.FAILED
+                for item in self._governance_work
+            )
+        started = monotonic()
+        tasks = [item.task for item in relevant if item.task is not None]
+        try:
+            if tasks:
+                await asyncio.wait_for(
+                    asyncio.shield(asyncio.gather(*tasks)),
+                    timeout=timeout,
+                )
+        except TimeoutError:
+            return False
+        finally:
+            self.diagnostics.governance_barrier_wait_ms += round(
+                (monotonic() - started) * 1000
+            )
+        return not any(
+            item.state in {GovernanceWorkState.PENDING, GovernanceWorkState.FAILED}
+            for item in relevant
+        )
+
+    async def drain_governance(self) -> None:
+        """Observe all background outcomes before task teardown."""
+        tasks = [item.task for item in self._governance_work if item.task is not None]
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
 
     def governed_evidence(self) -> str:
         if self.governance is not None:
@@ -310,3 +501,7 @@ class RuntimeMCPBridge:
             for item in getattr(self.tool_semantics_resolver, "diagnostics", ())
         )
         return tuple(messages)
+
+    @property
+    def governance_work(self) -> tuple[GovernanceWork, ...]:
+        return tuple(self._governance_work)

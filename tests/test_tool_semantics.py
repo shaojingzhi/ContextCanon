@@ -58,6 +58,38 @@ class ToolSemanticsTests(unittest.TestCase):
             ToolSemantics.UNKNOWN,
         )
 
+    def test_discovery_prepare_resolves_each_metadata_identity_once(self) -> None:
+        client = FakeSemanticClient([
+            {"semantics": "READ", "confidence": 0.95},
+            {"semantics": "SIDE_EFFECT", "confidence": 0.95},
+        ])
+        resolver = LLMToolSemanticsResolver(client)
+        tools = {
+            "records.read": {
+                "description": "Read records",
+                "input_schema": {"type": "object"},
+                "annotations": {"readOnlyHint": False},
+            },
+            "records.write": {
+                "description": "Write records",
+                "input_schema": {"type": "object"},
+                "annotations": {"destructiveHint": True},
+            },
+        }
+        resolver.prepare(tools)
+        resolver.prepare(tools)
+        self.assertEqual(len(client.prompts), 1)
+        self.assertEqual(resolver.cache_hits, 1)
+        self.assertEqual(
+            resolver.classify(
+                "records.read",
+                description="Read records",
+                input_schema={"type": "object"},
+                annotations={"readOnlyHint": False},
+            ),
+            ToolSemantics.READ,
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

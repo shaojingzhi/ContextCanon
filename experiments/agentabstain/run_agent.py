@@ -239,6 +239,7 @@ async def run_one(args: argparse.Namespace, task: str, side: str) -> dict[str, A
             usage = _extract_usage(result)
         except Exception as exc:
             model_error = _format_exception("model_request", exc)
+        await server.contextcanon_bridge.drain_governance()
         try:
             exported = await server.call_runtime_control_tool(export_name, {})
             export_payload = normalize_export(_structured_content(exported))
@@ -277,6 +278,9 @@ async def run_one(args: argparse.Namespace, task: str, side: str) -> dict[str, A
     }
     if governance is not None:
         metadata["semantic_diagnostics"] = governance.metrics
+        metadata["semantic_diagnostics"].update(
+            server.contextcanon_bridge.diagnostics.to_dict()
+        )
         metadata["semantic_response_diagnostics"] = list(
             getattr(governance.extractor, "response_diagnostics", ())
         )
