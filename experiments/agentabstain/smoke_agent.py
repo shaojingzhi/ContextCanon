@@ -11,6 +11,7 @@ from pathlib import Path
 
 from .adapter import AgentAbstainAdapter
 from .openai_runtime import build_contextcanon_server_class, official_server_env
+from .paths import configured_data, configured_repo
 
 
 async def run_smoke(repo: Path, data: Path, model_name: str, max_turns: int) -> dict:
@@ -78,8 +79,8 @@ async def run_smoke(repo: Path, data: Path, model_name: str, max_turns: int) -> 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--repo", default=os.environ.get("AGENTABSTAIN_REPO", "/tmp/agentabstain-m7"))
-    parser.add_argument("--data", default=os.environ.get("AGENTABSTAIN_DATA", "/tmp/agentabstain-data"))
+    parser.add_argument("--repo", default=configured_repo())
+    parser.add_argument("--data", default=configured_data())
     parser.add_argument("--model", default="deepseek-v4-pro")
     parser.add_argument("--max-turns", type=int, default=8)
     args = parser.parse_args(argv)

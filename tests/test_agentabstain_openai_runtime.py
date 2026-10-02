@@ -10,6 +10,7 @@ from experiments.agentabstain.openai_runtime import (
     official_server_env,
 )
 from experiments.agentabstain.official_gate import validate_gate_result
+from experiments.agentabstain.paths import DEFAULT_DATA, DEFAULT_REPO, configured_data, configured_repo
 from experiments.agentabstain.run_agent import (
     _build_persisted_result,
     _configure_provider_environment,
@@ -19,6 +20,11 @@ from experiments.agentabstain.run_agent import (
 
 
 class OpenAIRuntimeTests(unittest.TestCase):
+    def test_agentabstain_defaults_use_stable_user_paths(self) -> None:
+        self.assertEqual(configured_repo(), str(DEFAULT_REPO))
+        self.assertEqual(configured_data(), str(DEFAULT_DATA))
+        self.assertNotIn("/tmp/agentabstain", str(DEFAULT_REPO))
+        self.assertNotIn("/tmp/agentabstain", str(DEFAULT_DATA))
     @staticmethod
     def _gate_result(side: str, *, executed_tools: list[str], **diagnostic_overrides: object) -> dict:
         diagnostics = {

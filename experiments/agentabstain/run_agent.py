@@ -27,6 +27,7 @@ from contextcanon.tool_semantics import LLMToolSemanticsResolver
 
 from .adapter import AgentAbstainAdapter
 from .openai_runtime import build_contextcanon_server_class, official_server_env
+from .paths import configured_data, configured_repo, validate_runtime_paths
 from .runtime_governance import RuntimeGovernance
 
 TASKS = ("preview_008", "preview_013", "preview_015")
@@ -72,8 +73,8 @@ def _structured_content(result: Any) -> Any:
 def _upstream(repo: Path):
     repo = Path(repo)
     repo = repo.expanduser().resolve()
-    if not repo.exists():
-        raise SystemExit("Set --agentabstain-repo to a local AgentAbstain checkout.")
+    if not repo.is_dir():
+        raise SystemExit(f"AgentAbstain repo not found: {repo}")
     if str(repo) not in sys.path:
         sys.path.insert(0, str(repo))
     from agent.openaisdk.agent import OpenAISDKAgent
@@ -360,8 +361,8 @@ async def _run(args: argparse.Namespace) -> int:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--agentabstain-repo", default=os.environ.get("AGENTABSTAIN_REPO", "/tmp/agentabstain-m7"))
-    parser.add_argument("--agentabstain-data", default=os.environ.get("AGENTABSTAIN_DATA", "/tmp/agentabstain-data"))
+    parser.add_argument("--agentabstain-repo", default=configured_repo())
+    parser.add_argument("--agentabstain-data", default=configured_data())
     parser.add_argument("--task", choices=(*TASKS, "all"), default="preview_008")
     parser.add_argument("--side", choices=(*SIDES, "all"), default="abstain")
     parser.add_argument("--condition", choices=CONDITIONS, default="guard")
@@ -384,6 +385,12 @@ def main(argv: list[str] | None = None) -> int:
         default=DEFAULT_SEMANTIC_EXTRACTION_MAX_OUTPUT_TOKENS,
     )
     args = parser.parse_args(argv)
+    missing = validate_runtime_paths(
+        Path(args.agentabstain_repo).expanduser(),
+        Path(args.agentabstain_data).expanduser(),
+    )
+    if missing and args.run:
+        raise SystemExit("; ".join(missing))
     os.environ["AGENTABSTAIN_DATA"] = str(Path(args.agentabstain_data).expanduser())
     if not args.run:
         return _validate(args)

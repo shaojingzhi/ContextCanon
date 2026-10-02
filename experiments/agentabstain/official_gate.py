@@ -10,6 +10,7 @@ import sys
 from pathlib import Path
 
 from .adapter import AgentAbstainAdapter
+from .paths import configured_data, configured_repo
 from .openai_runtime import build_contextcanon_server_class, official_server_env
 
 
@@ -141,8 +142,8 @@ async def _run(args):
 
 def main(argv=None):
     parser = argparse.ArgumentParser()
-    parser.add_argument("--repo", default=os.environ.get("AGENTABSTAIN_REPO", "/tmp/agentabstain-m7"))
-    parser.add_argument("--data", default=os.environ.get("AGENTABSTAIN_DATA", "/tmp/agentabstain-data"))
+    parser.add_argument("--repo", default=configured_repo())
+    parser.add_argument("--data", default=configured_data())
     args = parser.parse_args(argv)
     return asyncio.run(_run(args))
 
