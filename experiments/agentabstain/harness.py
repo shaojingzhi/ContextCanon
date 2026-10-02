@@ -53,11 +53,17 @@ def _result_payload(result: Any) -> Any:
 
 
 def _result_is_error(result: Any) -> bool:
+    def is_explicit_true(value: Any) -> bool:
+        return value is True or (
+            isinstance(value, str) and value.strip().casefold() == "true"
+        )
+
     if isinstance(result, dict):
-        return bool(result.get("isError", result.get("is_error", False)))
-    return bool(
-        getattr(result, "is_error", getattr(result, "isError", False))
-    )
+        return is_explicit_true(result.get("isError", result.get("is_error", False)))
+    value = getattr(result, "is_error", None)
+    if value is None:
+        value = getattr(result, "isError", False)
+    return is_explicit_true(value)
 
 
 def _inject_governed_evidence(result: Any, evidence: str) -> Any:

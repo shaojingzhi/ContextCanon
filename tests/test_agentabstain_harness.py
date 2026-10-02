@@ -400,6 +400,23 @@ class HarnessBridgeTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(bridge.diagnostics.observations_seen, 1)
         self.assertEqual(bridge.adapter.ledger.claims, [])
 
+    async def test_string_false_mcp_error_flag_is_not_a_failed_observation(self) -> None:
+        async def call_tool(name: str, arguments: dict) -> dict:
+            return {
+                "isError": "false",
+                "structuredContent": {"date": "2026-03-22"},
+            }
+
+        bridge = RuntimeMCPBridge(
+            call_tool,
+            {"event_system.event_search": "lookup"},
+            condition="governed",
+        )
+        result = await bridge.call_tool("event_system.event_search", {})
+
+        self.assertEqual(bridge.diagnostics.observations_seen, 1)
+        self.assertNotIn("MCP tool returned isError=true", str(result))
+
     async def test_governed_result_contains_runtime_evidence(self) -> None:
         fake = FakeMCP()
         bridge = RuntimeMCPBridge(
