@@ -1,6 +1,7 @@
 """Small offline ContextCanon V2 governance core."""
 
 from .governance import govern
+from .compiler import SemanticCompilationError, SemanticCompiler
 from .models import (
     Cardinality,
     Claim,
@@ -23,5 +24,7 @@ __all__ = [
     "Relation",
     "RelationRecord",
     "SummaryState",
+    "SemanticCompilationError",
+    "SemanticCompiler",
     "govern",
 ]
