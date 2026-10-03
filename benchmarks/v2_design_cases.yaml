@@ -7,8 +7,8 @@
   fact_needs:
     - {subject: Spring Gala, dimension: event_date, value_type: date}
   gold_claims:
-    - {subject: Spring Gala, predicate: event_date, value: "2026-03-22", value_type: date, scope: {time: current}, modality: OBSERVED, cardinality: SINGLE, evidence_ids: [E1]}
-    - {subject: Spring Gala, predicate: event_date, value: "2026-03-23", value_type: date, scope: {time: current}, modality: OBSERVED, cardinality: SINGLE, evidence_ids: [E2]}
+    - {subject: Spring Gala, predicate: event_date, value: "2026-03-22", value_type: date, scope: {}, modality: OBSERVED, cardinality: SINGLE, evidence_ids: [E1]}
+    - {subject: Spring Gala, predicate: event_date, value: "2026-03-23", value_type: date, scope: {}, modality: OBSERVED, cardinality: SINGLE, evidence_ids: [E2]}
   gold_relations:
     - {left_evidence_ids: [E1], right_evidence_ids: [E2], relation: CONFLICTING}
   gold_summary: UNRESOLVED
@@ -21,8 +21,8 @@
   fact_needs:
     - {subject: auth, dimension: protocol, value_type: enum}
   gold_claims:
-    - {subject: auth, predicate: protocol, value: JWT, value_type: enum, scope: {time: current}, modality: OBSERVED, cardinality: SINGLE, evidence_ids: [E1]}
-    - {subject: auth, predicate: protocol, value: OAuth2, value_type: enum, scope: {time: current}, modality: OBSERVED, cardinality: SINGLE, evidence_ids: [E2]}
+    - {subject: auth, predicate: protocol, value: JWT, value_type: enum, scope: {}, modality: OBSERVED, cardinality: SINGLE, evidence_ids: [E1]}
+    - {subject: auth, predicate: protocol, value: OAuth2, value_type: enum, scope: {}, modality: OBSERVED, cardinality: SINGLE, evidence_ids: [E2]}
   gold_relations:
     - {left_evidence_ids: [E1], right_evidence_ids: [E2], relation: CONFLICTING}
   gold_summary: UNRESOLVED
@@ -35,8 +35,8 @@
   fact_needs:
     - {subject: payments, dimension: enabled, value_type: boolean}
   gold_claims:
-    - {subject: payments, predicate: enabled, value: true, value_type: boolean, scope: {time: current}, modality: OBSERVED, cardinality: SINGLE, evidence_ids: [E1]}
-    - {subject: payments, predicate: enabled, value: false, value_type: boolean, scope: {time: current}, modality: OBSERVED, cardinality: SINGLE, evidence_ids: [E2]}
+    - {subject: payments, predicate: enabled, value: true, value_type: boolean, scope: {}, modality: OBSERVED, cardinality: SINGLE, evidence_ids: [E1]}
+    - {subject: payments, predicate: enabled, value: false, value_type: boolean, scope: {}, modality: OBSERVED, cardinality: SINGLE, evidence_ids: [E2]}
   gold_relations:
     - {left_evidence_ids: [E1], right_evidence_ids: [E2], relation: CONFLICTING}
   gold_summary: UNRESOLVED
@@ -49,8 +49,8 @@
   fact_needs:
     - {subject: account, dimension: mfa_required, value_type: boolean}
   gold_claims:
-    - {subject: account, predicate: mfa_required, value: true, value_type: boolean, scope: {time: current}, modality: REQUIRED, cardinality: SINGLE, evidence_ids: [E1]}
-    - {subject: account, predicate: mfa_required, value: false, value_type: boolean, scope: {time: current}, modality: REQUIRED, cardinality: SINGLE, evidence_ids: [E2]}
+    - {subject: account, predicate: mfa_required, value: true, value_type: boolean, scope: {}, modality: REQUIRED, cardinality: SINGLE, evidence_ids: [E1]}
+    - {subject: account, predicate: mfa_required, value: false, value_type: boolean, scope: {}, modality: REQUIRED, cardinality: SINGLE, evidence_ids: [E2]}
   gold_relations:
     - {left_evidence_ids: [E1], right_evidence_ids: [E2], relation: CONFLICTING}
   gold_summary: UNRESOLVED
@@ -63,8 +63,8 @@
   fact_needs:
     - {subject: service, dimension: max_retry, value_type: number}
   gold_claims:
-    - {subject: service, predicate: max_retry, value: 3, value_type: number, scope: {time: current}, modality: DOCUMENTED, cardinality: SINGLE, evidence_ids: [E1]}
-    - {subject: service, predicate: max_retry, value: 5, value_type: number, scope: {time: current}, modality: DOCUMENTED, cardinality: SINGLE, evidence_ids: [E2]}
+    - {subject: service, predicate: max_retry, value: 3, value_type: number, scope: {}, modality: DOCUMENTED, cardinality: SINGLE, evidence_ids: [E1]}
+    - {subject: service, predicate: max_retry, value: 5, value_type: number, scope: {}, modality: DOCUMENTED, cardinality: SINGLE, evidence_ids: [E2]}
   gold_relations:
     - {left_evidence_ids: [E1], right_evidence_ids: [E2], relation: UNKNOWN}
   gold_summary: UNRESOLVED
@@ -77,8 +77,8 @@
   fact_needs:
     - {subject: api, dimension: timeout_seconds, value_type: number}
   gold_claims:
-    - {subject: api, predicate: timeout_seconds, value: 30, value_type: number, scope: {time: current}, modality: OBSERVED, cardinality: SINGLE, evidence_ids: [E1]}
-    - {subject: api, predicate: timeout_seconds, value: 45, value_type: number, scope: {time: current}, modality: OBSERVED, cardinality: SINGLE, evidence_ids: [E2]}
+    - {subject: api, predicate: timeout_seconds, value: 30, value_type: number, scope: {}, modality: OBSERVED, cardinality: SINGLE, evidence_ids: [E1]}
+    - {subject: api, predicate: timeout_seconds, value: 45, value_type: number, scope: {}, modality: OBSERVED, cardinality: SINGLE, evidence_ids: [E2]}
   gold_relations:
     - {left_evidence_ids: [E1], right_evidence_ids: [E2], relation: CONFLICTING}
   gold_summary: UNRESOLVED
@@ -142,13 +142,13 @@
 - case_id: F1
   domain: business_rules
   evidence:
-    - {evidence_id: E1, source_id: catalog, location: supported_region, content: US}
-    - {evidence_id: E2, source_id: catalog, location: supported_region, content: EU}
+    - {evidence_id: E1, source_id: catalog, location: supported_region, content: "supported regions include US"}
+    - {evidence_id: E2, source_id: catalog, location: supported_region, content: "supported regions include EU"}
   fact_needs:
     - {subject: product, dimension: supported_region, value_type: enum}
   gold_claims:
-    - {subject: product, predicate: supported_region, value: US, value_type: enum, scope: {time: current}, modality: OBSERVED, cardinality: MULTI, evidence_ids: [E1]}
-    - {subject: product, predicate: supported_region, value: EU, value_type: enum, scope: {time: current}, modality: OBSERVED, cardinality: MULTI, evidence_ids: [E2]}
+    - {subject: product, predicate: supported_region, value: US, value_type: enum, scope: {}, modality: OBSERVED, cardinality: MULTI, evidence_ids: [E1]}
+    - {subject: product, predicate: supported_region, value: EU, value_type: enum, scope: {}, modality: OBSERVED, cardinality: MULTI, evidence_ids: [E2]}
   gold_relations:
     - {left_evidence_ids: [E1], right_evidence_ids: [E2], relation: COMPATIBLE}
   gold_summary: CLEAR
@@ -156,13 +156,13 @@
 - case_id: F2
   domain: operations
   evidence:
-    - {evidence_id: E1, source_id: directory, location: role, content: owner}
-    - {evidence_id: E2, source_id: directory, location: role, content: auditor}
+    - {evidence_id: E1, source_id: directory, location: role, content: "assigned admin roles include owner"}
+    - {evidence_id: E2, source_id: directory, location: role, content: "assigned admin roles include auditor"}
   fact_needs:
     - {subject: user, dimension: admin_role, value_type: enum}
   gold_claims:
-    - {subject: user, predicate: admin_role, value: owner, value_type: enum, scope: {time: current}, modality: OBSERVED, cardinality: MULTI, evidence_ids: [E1]}
-    - {subject: user, predicate: admin_role, value: auditor, value_type: enum, scope: {time: current}, modality: OBSERVED, cardinality: MULTI, evidence_ids: [E2]}
+    - {subject: user, predicate: admin_role, value: owner, value_type: enum, scope: {}, modality: OBSERVED, cardinality: MULTI, evidence_ids: [E1]}
+    - {subject: user, predicate: admin_role, value: auditor, value_type: enum, scope: {}, modality: OBSERVED, cardinality: MULTI, evidence_ids: [E2]}
   gold_relations:
     - {left_evidence_ids: [E1], right_evidence_ids: [E2], relation: COMPATIBLE}
   gold_summary: CLEAR
@@ -189,8 +189,8 @@
   fact_needs:
     - {subject: service, dimension: replica_count, value_type: number}
   gold_claims:
-    - {subject: service, predicate: replica_count, value: 3, value_type: number, scope: {time: current}, modality: OBSERVED, cardinality: SINGLE, evidence_ids: [E1]}
-    - {subject: service, predicate: replica_count, value: 6, value_type: number, scope: {time: current}, modality: REQUIRED, cardinality: SINGLE, evidence_ids: [E2]}
+    - {subject: service, predicate: replica_count, value: 3, value_type: number, scope: {}, modality: OBSERVED, cardinality: SINGLE, evidence_ids: [E1]}
+    - {subject: service, predicate: replica_count, value: 6, value_type: number, scope: {}, modality: REQUIRED, cardinality: SINGLE, evidence_ids: [E2]}
   gold_relations:
     - {left_evidence_ids: [E1], right_evidence_ids: [E2], relation: DIVERGENT}
   gold_summary: UNRESOLVED
@@ -217,8 +217,8 @@
   fact_needs:
     - {subject: auth, dimension: protocol, value_type: enum}
   gold_claims:
-    - {subject: auth, predicate: protocol, value: JWT, value_type: enum, scope: {time: current}, modality: DOCUMENTED, cardinality: SINGLE, evidence_ids: [E1]}
-    - {subject: auth, predicate: protocol, value: OAuth2, value_type: enum, scope: {time: current}, modality: INTENDED, cardinality: SINGLE, evidence_ids: [E2]}
+    - {subject: auth, predicate: protocol, value: JWT, value_type: enum, scope: {}, modality: DOCUMENTED, cardinality: SINGLE, evidence_ids: [E1]}
+    - {subject: auth, predicate: protocol, value: OAuth2, value_type: enum, scope: {}, modality: INTENDED, cardinality: SINGLE, evidence_ids: [E2]}
   gold_relations:
     - {left_evidence_ids: [E1], right_evidence_ids: [E2], relation: UNKNOWN}
   gold_summary: UNRESOLVED
@@ -226,8 +226,8 @@
 - case_id: I1
   domain: business_rules
   evidence:
-    - {evidence_id: E1, source_id: eu-policy, location: retention, content: "EU retention 30d"}
-    - {evidence_id: E2, source_id: eu-override, location: retention, content: "EU retention 90d"}
+    - {evidence_id: E1, source_id: eu-policy, location: retention, content: "EU retention must be 30d"}
+    - {evidence_id: E2, source_id: eu-override, location: retention, content: "EU retention must be 90d"}
   fact_needs:
     - {subject: records, dimension: retention, value_type: number}
   gold_claims:
@@ -240,8 +240,8 @@
 - case_id: I2
   domain: business_rules
   evidence:
-    - {evidence_id: E1, source_id: payment-policy, location: limit, content: "US limit 100"}
-    - {evidence_id: E2, source_id: payment-override, location: limit, content: "US limit 200"}
+    - {evidence_id: E1, source_id: payment-policy, location: limit, content: "US limit is required to be 100"}
+    - {evidence_id: E2, source_id: payment-override, location: limit, content: "US limit is required to be 200"}
   fact_needs:
     - {subject: payments, dimension: limit, value_type: number}
   gold_claims:
@@ -287,10 +287,8 @@
   fact_needs:
     - {subject: Spring Gala, dimension: event_date, value_type: date}
   gold_claims:
-    - {subject: Spring Gala, predicate: event_date, value: "2026-03-22", value_type: date, scope: {time: current}, modality: OBSERVED, cardinality: SINGLE, evidence_ids: [E1]}
-    - {subject: Spring Gala, predicate: event_date, value: "2026-03-22", value_type: date, scope: {time: current}, modality: OBSERVED, cardinality: SINGLE, evidence_ids: [E2]}
-  gold_relations:
-    - {left_evidence_ids: [E1], right_evidence_ids: [E2], relation: SUPPORTING}
+    - {subject: Spring Gala, predicate: event_date, value: "2026-03-22", value_type: date, scope: {}, modality: OBSERVED, cardinality: SINGLE, evidence_ids: [E1, E2]}
+  gold_relations: []
   gold_summary: CLEAR
   reason: predicate paraphrase with equal date
 - case_id: K2
@@ -301,10 +299,8 @@
   fact_needs:
     - {subject: service, dimension: max_retry, value_type: number}
   gold_claims:
-    - {subject: service, predicate: max_retry, value: 3, value_type: number, scope: {time: current}, modality: OBSERVED, cardinality: SINGLE, evidence_ids: [E1]}
-    - {subject: service, predicate: max_retry, value: 3, value_type: number, scope: {time: current}, modality: OBSERVED, cardinality: SINGLE, evidence_ids: [E2]}
-  gold_relations:
-    - {left_evidence_ids: [E1], right_evidence_ids: [E2], relation: SUPPORTING}
+    - {subject: service, predicate: max_retry, value: 3, value_type: number, scope: {}, modality: OBSERVED, cardinality: SINGLE, evidence_ids: [E1, E2]}
+  gold_relations: []
   gold_summary: CLEAR
   reason: predicate paraphrase with equal number
 - case_id: L1
@@ -315,10 +311,8 @@
   fact_needs:
     - {subject: Aurora, dimension: owner, value_type: string}
   gold_claims:
-    - {subject: Aurora, predicate: owner, value: Alice, value_type: string, scope: {time: current}, modality: DOCUMENTED, cardinality: SINGLE, evidence_ids: [E1]}
-    - {subject: Aurora, predicate: owner, value: Alice, value_type: string, scope: {time: current}, modality: DOCUMENTED, cardinality: SINGLE, evidence_ids: [E2]}
-  gold_relations:
-    - {left_evidence_ids: [E1], right_evidence_ids: [E2], relation: SUPPORTING}
+    - {subject: Aurora, predicate: owner, value: Alice, value_type: string, scope: {}, modality: DOCUMENTED, cardinality: SINGLE, evidence_ids: [E1, E2]}
+  gold_relations: []
   gold_summary: CLEAR
   reason: entity alias with equal value
 - case_id: L2
@@ -329,10 +323,8 @@
   fact_needs:
     - {subject: Riverside Community Hall, dimension: capacity, value_type: number}
   gold_claims:
-    - {subject: Riverside Community Hall, predicate: capacity, value: 200, value_type: number, scope: {time: current}, modality: DOCUMENTED, cardinality: SINGLE, evidence_ids: [E1]}
-    - {subject: Riverside Community Hall, predicate: capacity, value: 200, value_type: number, scope: {time: current}, modality: DOCUMENTED, cardinality: SINGLE, evidence_ids: [E2]}
-  gold_relations:
-    - {left_evidence_ids: [E1], right_evidence_ids: [E2], relation: SUPPORTING}
+    - {subject: Riverside Community Hall, predicate: capacity, value: 200, value_type: number, scope: {}, modality: DOCUMENTED, cardinality: SINGLE, evidence_ids: [E1, E2]}
+  gold_relations: []
   gold_summary: CLEAR
   reason: entity alias with equal value
 - case_id: M1
@@ -362,7 +354,7 @@
   fact_needs:
     - {subject: auth, dimension: protocol, value_type: enum}
   gold_claims:
-    - {subject: auth, predicate: protocol, value: JWT, value_type: enum, scope: {time: current}, modality: OBSERVED, cardinality: SINGLE, evidence_ids: [E1]}
+    - {subject: auth, predicate: protocol, value: JWT, value_type: enum, scope: {}, modality: OBSERVED, cardinality: SINGLE, evidence_ids: [E1]}
   gold_relations: []
   gold_summary: CLEAR
   reason: one usable Claim is sufficient for a clear non-conflicting result
@@ -373,7 +365,7 @@
   fact_needs:
     - {subject: api, dimension: timeout_seconds, value_type: number}
   gold_claims:
-    - {subject: api, predicate: timeout_seconds, value: 30, value_type: number, scope: {time: current}, modality: DOCUMENTED, cardinality: SINGLE, evidence_ids: [E1]}
+    - {subject: api, predicate: timeout_seconds, value: 30, value_type: number, scope: {}, modality: DOCUMENTED, cardinality: SINGLE, evidence_ids: [E1]}
   gold_relations: []
   gold_summary: CLEAR
   reason: one documented usable Claim is not incomplete
@@ -385,8 +377,8 @@
   fact_needs:
     - {subject: product, dimension: supported_region, value_type: enum}
   gold_claims:
-    - {subject: product, predicate: supported_region, value: US, value_type: enum, scope: {time: current}, modality: OBSERVED, cardinality: UNKNOWN, evidence_ids: [E1]}
-    - {subject: product, predicate: supported_region, value: EU, value_type: enum, scope: {time: current}, modality: OBSERVED, cardinality: UNKNOWN, evidence_ids: [E2]}
+    - {subject: product, predicate: supported_region, value: US, value_type: enum, scope: {}, modality: OBSERVED, cardinality: UNKNOWN, evidence_ids: [E1]}
+    - {subject: product, predicate: supported_region, value: EU, value_type: enum, scope: {}, modality: OBSERVED, cardinality: UNKNOWN, evidence_ids: [E2]}
   gold_relations:
     - {left_evidence_ids: [E1], right_evidence_ids: [E2], relation: UNKNOWN}
   gold_summary: UNRESOLVED
@@ -399,8 +391,8 @@
   fact_needs:
     - {subject: project, dimension: admin_contact, value_type: string}
   gold_claims:
-    - {subject: project, predicate: admin_contact, value: Alice, value_type: string, scope: {time: current}, modality: OBSERVED, cardinality: UNKNOWN, evidence_ids: [E1]}
-    - {subject: project, predicate: admin_contact, value: Bob, value_type: string, scope: {time: current}, modality: OBSERVED, cardinality: UNKNOWN, evidence_ids: [E2]}
+    - {subject: project, predicate: admin_contact, value: Alice, value_type: string, scope: {}, modality: OBSERVED, cardinality: UNKNOWN, evidence_ids: [E1]}
+    - {subject: project, predicate: admin_contact, value: Bob, value_type: string, scope: {}, modality: OBSERVED, cardinality: UNKNOWN, evidence_ids: [E2]}
   gold_relations:
     - {left_evidence_ids: [E1], right_evidence_ids: [E2], relation: UNKNOWN}
   gold_summary: UNRESOLVED
@@ -416,10 +408,10 @@
     - {subject: service, dimension: enabled, value_type: boolean}
     - {subject: service, dimension: max_retry, value_type: number}
   gold_claims:
-    - {subject: service, predicate: enabled, value: true, value_type: boolean, scope: {time: current}, modality: OBSERVED, cardinality: SINGLE, evidence_ids: [E1]}
-    - {subject: service, predicate: enabled, value: false, value_type: boolean, scope: {time: current}, modality: OBSERVED, cardinality: SINGLE, evidence_ids: [E2]}
-    - {subject: service, predicate: max_retry, value: 3, value_type: number, scope: {time: current}, modality: OBSERVED, cardinality: SINGLE, evidence_ids: [E3]}
-    - {subject: service, predicate: max_retry, value: 5, value_type: number, scope: {time: current}, modality: OBSERVED, cardinality: SINGLE, evidence_ids: [E4]}
+    - {subject: service, predicate: enabled, value: true, value_type: boolean, scope: {}, modality: OBSERVED, cardinality: SINGLE, evidence_ids: [E1]}
+    - {subject: service, predicate: enabled, value: false, value_type: boolean, scope: {}, modality: OBSERVED, cardinality: SINGLE, evidence_ids: [E2]}
+    - {subject: service, predicate: max_retry, value: 3, value_type: number, scope: {}, modality: OBSERVED, cardinality: SINGLE, evidence_ids: [E3]}
+    - {subject: service, predicate: max_retry, value: 5, value_type: number, scope: {}, modality: OBSERVED, cardinality: SINGLE, evidence_ids: [E4]}
   gold_relations:
     - {left_evidence_ids: [E1], right_evidence_ids: [E2], relation: CONFLICTING}
     - {left_evidence_ids: [E3], right_evidence_ids: [E4], relation: CONFLICTING}
@@ -438,8 +430,8 @@
   gold_claims:
     - {subject: security, predicate: retention, value: 30, value_type: number, scope: {region: EU}, modality: REQUIRED, cardinality: SINGLE, evidence_ids: [E1]}
     - {subject: security, predicate: retention, value: 90, value_type: number, scope: {region: EU}, modality: REQUIRED, cardinality: SINGLE, evidence_ids: [E2]}
-    - {subject: security, predicate: mfa_required, value: true, value_type: boolean, scope: {time: current}, modality: REQUIRED, cardinality: SINGLE, evidence_ids: [E3]}
-    - {subject: security, predicate: mfa_required, value: false, value_type: boolean, scope: {time: current}, modality: REQUIRED, cardinality: SINGLE, evidence_ids: [E4]}
+    - {subject: security, predicate: mfa_required, value: true, value_type: boolean, scope: {}, modality: REQUIRED, cardinality: SINGLE, evidence_ids: [E3]}
+    - {subject: security, predicate: mfa_required, value: false, value_type: boolean, scope: {}, modality: REQUIRED, cardinality: SINGLE, evidence_ids: [E4]}
   gold_relations:
     - {left_evidence_ids: [E1], right_evidence_ids: [E2], relation: CONFLICTING}
     - {left_evidence_ids: [E3], right_evidence_ids: [E4], relation: CONFLICTING}
@@ -453,10 +445,8 @@
   fact_needs:
     - {subject: Spring Gala, dimension: event_date, value_type: date}
   gold_claims:
-    - {subject: Spring Gala, predicate: event_date, value: "2026-03-22", value_type: date, scope: {time: current}, modality: OBSERVED, cardinality: SINGLE, evidence_ids: [E1]}
-    - {subject: Spring Gala, predicate: event_date, value: "2026-03-22", value_type: date, scope: {time: current}, modality: OBSERVED, cardinality: SINGLE, evidence_ids: [E2]}
-  gold_relations:
-    - {left_evidence_ids: [E1], right_evidence_ids: [E2], relation: SUPPORTING}
+    - {subject: Spring Gala, predicate: event_date, value: "2026-03-22", value_type: date, scope: {}, modality: OBSERVED, cardinality: SINGLE, evidence_ids: [E1, E2]}
+  gold_relations: []
   gold_summary: CLEAR
   reason: irrelevant text does not change equal date support
 - case_id: Q2
@@ -466,7 +456,7 @@
   fact_needs:
     - {subject: service, dimension: max_retry, value_type: number}
   gold_claims:
-    - {subject: service, predicate: max_retry, value: 3, value_type: number, scope: {time: current}, modality: OBSERVED, cardinality: SINGLE, evidence_ids: [E1]}
+    - {subject: service, predicate: max_retry, value: 3, value_type: number, scope: {}, modality: OBSERVED, cardinality: SINGLE, evidence_ids: [E1]}
   gold_relations: []
   gold_summary: CLEAR
   reason: one usable Claim remains clear despite noise
@@ -478,8 +468,8 @@
   fact_needs:
     - {subject: service, dimension: max_retry, value_type: number}
   gold_claims:
-    - {subject: service, predicate: max_retry, value: 3, value_type: number, scope: {time: current}, modality: OBSERVED, cardinality: SINGLE, evidence_ids: [E1]}
-    - {subject: service, predicate: max_retry, value: 3, value_type: number, scope: {time: current}, modality: OBSERVED, cardinality: SINGLE, evidence_ids: [E2]}
+    - {subject: service, predicate: max_retry, value: 3, value_type: number, scope: {}, modality: OBSERVED, cardinality: SINGLE, evidence_ids: [E1]}
+    - {subject: service, predicate: max_retry, value: 3, value_type: number, scope: {}, modality: OBSERVED, cardinality: SINGLE, evidence_ids: [E2]}
   gold_relations:
     - {left_evidence_ids: [E1], right_evidence_ids: [E2], relation: SUPPORTING}
   gold_summary: CLEAR
@@ -492,8 +482,8 @@
   fact_needs:
     - {subject: feature, dimension: enabled, value_type: boolean}
   gold_claims:
-    - {subject: feature, predicate: enabled, value: true, value_type: boolean, scope: {time: current}, modality: OBSERVED, cardinality: SINGLE, evidence_ids: [E1]}
-    - {subject: feature, predicate: enabled, value: true, value_type: boolean, scope: {time: current}, modality: OBSERVED, cardinality: SINGLE, evidence_ids: [E2]}
+    - {subject: feature, predicate: enabled, value: true, value_type: boolean, scope: {}, modality: OBSERVED, cardinality: SINGLE, evidence_ids: [E1]}
+    - {subject: feature, predicate: enabled, value: true, value_type: boolean, scope: {}, modality: OBSERVED, cardinality: SINGLE, evidence_ids: [E2]}
   gold_relations:
     - {left_evidence_ids: [E1], right_evidence_ids: [E2], relation: SUPPORTING}
   gold_summary: CLEAR
