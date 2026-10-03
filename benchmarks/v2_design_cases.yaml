@@ -63,12 +63,12 @@
   fact_needs:
     - {subject: service, dimension: max_retry, value_type: number}
   gold_claims:
-    - {subject: service, predicate: max_retry, value: 3, value_type: number, scope: {time: current}, modality: OBSERVED, cardinality: SINGLE, evidence_ids: [E1]}
-    - {subject: service, predicate: max_retry, value: 5, value_type: number, scope: {time: current}, modality: OBSERVED, cardinality: SINGLE, evidence_ids: [E2]}
+    - {subject: service, predicate: max_retry, value: 3, value_type: number, scope: {time: current}, modality: DOCUMENTED, cardinality: SINGLE, evidence_ids: [E1]}
+    - {subject: service, predicate: max_retry, value: 5, value_type: number, scope: {time: current}, modality: DOCUMENTED, cardinality: SINGLE, evidence_ids: [E2]}
   gold_relations:
-    - {left_evidence_ids: [E1], right_evidence_ids: [E2], relation: CONFLICTING}
+    - {left_evidence_ids: [E1], right_evidence_ids: [E2], relation: UNKNOWN}
   gold_summary: UNRESOLVED
-  reason: current numeric runtime values conflict
+  reason: documented values do not establish a competing active policy
 - case_id: C2
   domain: operations
   evidence:
