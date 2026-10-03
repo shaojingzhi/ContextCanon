@@ -65,6 +65,32 @@ class V2CompilerTests(unittest.TestCase):
         self.assertIn("predicate MUST exactly equal the dimension", prompts[0])
         self.assertIn("same FactNeed", prompts[0])
 
+    def test_prompt_defines_scope_cardinality_modality_and_governance_boundary(self) -> None:
+        prompts: list[str] = []
+        compiler = SemanticCompiler(lambda prompt: prompts.append(prompt) or _response())
+        compiler.compile(
+            [_evidence("current", "current runtime protocol is JWT")],
+            (FactNeed("auth", "protocol", value_type="enum"),),
+        )
+        prompt = prompts[0]
+        for phrase in (
+            "current, currently, or now to scope.time=current",
+            "future, later, or planned future to scope.time=future",
+            "production to scope.environment=production",
+            "SINGLE is one scalar value",
+            "MULTI means multiple distinct values",
+            "UNKNOWN means the evidence does not determine SINGLE versus MULTI",
+            "disagreeing scalar settings still produce separate SINGLE Claims",
+            "OBSERVED is actual/runtime/current state",
+            "DOCUMENTED is documentation",
+            "INTENDED is a plan or future target",
+            "REQUIRED is a requirement",
+            "governance resolves disagreement later",
+            "Never emit SUPPORTING, COMPATIBLE, CONFLICTING, or DIVERGENT",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, prompt)
+
     def test_current_and_future_scope_and_modalities_are_preserved(self) -> None:
         evidence = [_evidence("current", "JWT now"), _evidence("future", "OAuth2 later")]
         compiler = SemanticCompiler(
