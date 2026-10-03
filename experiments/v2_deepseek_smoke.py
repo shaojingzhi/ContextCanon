@@ -42,8 +42,8 @@ def build_cases() -> tuple[SmokeCase, ...]:
         SmokeCase(
             "scalar_current_conflict",
             (
-                _evidence("A1", "runtime-config", "auth.protocol", "provider: JWT"),
-                _evidence("A2", "accepted-config", "auth.protocol", "provider: OAuth2"),
+                _evidence("A1", "runtime-config", "auth.protocol", "current runtime protocol is JWT"),
+                _evidence("A2", "runtime-config-secondary", "auth.protocol", "current runtime protocol is OAuth2"),
             ),
             (FactNeed("auth", "protocol", value_type="enum"),),
         ),
@@ -158,6 +158,8 @@ def _run_live(cases: tuple[SmokeCase, ...], client: Any, model: str) -> list[dic
             record["summary_state"] = result.summary_state.value
         except SemanticCompilationError as error:
             record["semantic_compilation_error"] = str(error)
+            failed_result = govern((), case.fact_needs, compilation_error=True)
+            record["summary_state"] = failed_result.summary_state.value
         record["raw_model_response"] = raw_response
         record["elapsed_model_call_ms"] = elapsed_model_call_ms
         print(json.dumps(record, ensure_ascii=False, sort_keys=True))

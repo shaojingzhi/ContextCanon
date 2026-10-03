@@ -26,6 +26,11 @@ class V2DeepSeekSmokeTests(unittest.TestCase):
                 "semantic_normalization",
             ],
         )
+        first = cases[0]
+        self.assertEqual(
+            [item.content for item in first.evidence],
+            ["current runtime protocol is JWT", "current runtime protocol is OAuth2"],
+        )
 
     def test_default_main_mode_makes_no_api_call(self) -> None:
         output = io.StringIO()
@@ -51,6 +56,20 @@ class V2DeepSeekSmokeTests(unittest.TestCase):
         self.assertEqual(client.calls, 5)
         self.assertEqual(len(records), 5)
         self.assertTrue(all(record["summary_state"] == SummaryState.INCOMPLETE.value for record in records))
+
+    def test_compilation_failure_records_incomplete_governance_state(self) -> None:
+        class FailingClient:
+            def complete(self, _prompt: str, *, model: str) -> SimpleNamespace:
+                return SimpleNamespace(content="not-json")
+
+        output = io.StringIO()
+        with redirect_stdout(output):
+            records = v2_deepseek_smoke._run_live(
+                (v2_deepseek_smoke.build_cases()[0],), FailingClient(), "offline-test"
+            )
+        self.assertEqual(len(records), 1)
+        self.assertTrue(records[0]["semantic_compilation_error"])
+        self.assertEqual(records[0]["summary_state"], SummaryState.INCOMPLETE.value)
 
 
 if __name__ == "__main__":
