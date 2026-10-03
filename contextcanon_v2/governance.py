@@ -95,8 +95,17 @@ def _scope_overlap(left: dict[str, Any], right: dict[str, Any]) -> str:
 def _scope_matches(claim: Claim, need: FactNeed) -> bool:
     if need.scope_constraint is None:
         return True
-    overlap = _scope_overlap(claim.scope, need.scope_constraint)
-    return overlap == "YES"
+    for key, expected in need.scope_constraint.items():
+        if key not in claim.scope:
+            return False
+        actual = claim.scope[key]
+        if actual is None or (
+            isinstance(actual, str) and _canonical(actual) in {"unknown", "?"}
+        ):
+            return False
+        if _canonical(str(actual)) != _canonical(str(expected)):
+            return False
+    return True
 
 
 def _same_dimension(left: Claim, right: Claim) -> bool:

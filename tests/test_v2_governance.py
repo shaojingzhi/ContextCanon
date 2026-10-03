@@ -259,6 +259,32 @@ class V2GovernanceTests(unittest.TestCase):
         need = FactNeed("auth", "protocol", scope_constraint={"environment": "production"})
         self.assertEqual(govern([claim], (need,)).summary_state, SummaryState.INCOMPLETE)
 
+    def test_fact_need_scope_constraint_is_a_partial_filter(self) -> None:
+        claim = Claim(
+            "auth", "protocol", "JWT", "enum",
+            {"environment": "production", "time": "current"},
+            Modality.OBSERVED, Cardinality.SINGLE, ("e1",),
+        )
+        need = FactNeed("auth", "protocol", scope_constraint={"environment": "production"})
+        self.assertEqual(govern([claim], (need,)).summary_state, SummaryState.CLEAR)
+
+    def test_fact_need_scope_constraint_rejects_conflicting_qualifier(self) -> None:
+        claim = Claim(
+            "auth", "protocol", "JWT", "enum",
+            {"environment": "staging", "time": "current"},
+            Modality.OBSERVED, Cardinality.SINGLE, ("e1",),
+        )
+        need = FactNeed("auth", "protocol", scope_constraint={"environment": "production"})
+        self.assertEqual(govern([claim], (need,)).summary_state, SummaryState.INCOMPLETE)
+
+    def test_fact_need_scope_constraint_rejects_missing_qualifier(self) -> None:
+        claim = Claim(
+            "auth", "protocol", "JWT", "enum", {"time": "current"},
+            Modality.OBSERVED, Cardinality.SINGLE, ("e1",),
+        )
+        need = FactNeed("auth", "protocol", scope_constraint={"environment": "production"})
+        self.assertEqual(govern([claim], (need,)).summary_state, SummaryState.INCOMPLETE)
+
     def test_boolean_words_are_not_semantically_normalized(self) -> None:
         claims = [
             Claim("feature", "enabled", True, "boolean", {"time": "current"}, Modality.OBSERVED, Cardinality.SINGLE, ("e1",)),
