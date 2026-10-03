@@ -9,7 +9,8 @@
   gold_claims:
     - {subject: Spring Gala, predicate: event_date, value: "2026-03-22", value_type: date, scope: {time: current}, modality: OBSERVED, cardinality: SINGLE, evidence_ids: [E1]}
     - {subject: Spring Gala, predicate: event_date, value: "2026-03-23", value_type: date, scope: {time: current}, modality: OBSERVED, cardinality: SINGLE, evidence_ids: [E2]}
-  gold_relations: [CONFLICTING]
+  gold_relations:
+    - {left_evidence_ids: [E1], right_evidence_ids: [E2], relation: CONFLICTING}
   gold_summary: UNRESOLVED
   reason: same current single-valued event date differs
 - case_id: A2
@@ -22,7 +23,8 @@
   gold_claims:
     - {subject: auth, predicate: protocol, value: JWT, value_type: enum, scope: {time: current}, modality: OBSERVED, cardinality: SINGLE, evidence_ids: [E1]}
     - {subject: auth, predicate: protocol, value: OAuth2, value_type: enum, scope: {time: current}, modality: OBSERVED, cardinality: SINGLE, evidence_ids: [E2]}
-  gold_relations: [CONFLICTING]
+  gold_relations:
+    - {left_evidence_ids: [E1], right_evidence_ids: [E2], relation: CONFLICTING}
   gold_summary: UNRESOLVED
   reason: same current single-valued protocol differs
 - case_id: B1
@@ -35,7 +37,8 @@
   gold_claims:
     - {subject: payments, predicate: enabled, value: true, value_type: boolean, scope: {time: current}, modality: OBSERVED, cardinality: SINGLE, evidence_ids: [E1]}
     - {subject: payments, predicate: enabled, value: false, value_type: boolean, scope: {time: current}, modality: OBSERVED, cardinality: SINGLE, evidence_ids: [E2]}
-  gold_relations: [CONFLICTING]
+  gold_relations:
+    - {left_evidence_ids: [E1], right_evidence_ids: [E2], relation: CONFLICTING}
   gold_summary: UNRESOLVED
   reason: current feature flag values conflict
 - case_id: B2
@@ -48,7 +51,8 @@
   gold_claims:
     - {subject: account, predicate: mfa_required, value: true, value_type: boolean, scope: {time: current}, modality: REQUIRED, cardinality: SINGLE, evidence_ids: [E1]}
     - {subject: account, predicate: mfa_required, value: false, value_type: boolean, scope: {time: current}, modality: REQUIRED, cardinality: SINGLE, evidence_ids: [E2]}
-  gold_relations: [CONFLICTING]
+  gold_relations:
+    - {left_evidence_ids: [E1], right_evidence_ids: [E2], relation: CONFLICTING}
   gold_summary: UNRESOLVED
   reason: two current required policies conflict
 - case_id: C1
@@ -61,7 +65,8 @@
   gold_claims:
     - {subject: service, predicate: max_retry, value: 3, value_type: number, scope: {time: current}, modality: OBSERVED, cardinality: SINGLE, evidence_ids: [E1]}
     - {subject: service, predicate: max_retry, value: 5, value_type: number, scope: {time: current}, modality: OBSERVED, cardinality: SINGLE, evidence_ids: [E2]}
-  gold_relations: [CONFLICTING]
+  gold_relations:
+    - {left_evidence_ids: [E1], right_evidence_ids: [E2], relation: CONFLICTING}
   gold_summary: UNRESOLVED
   reason: current numeric runtime values conflict
 - case_id: C2
@@ -74,7 +79,8 @@
   gold_claims:
     - {subject: api, predicate: timeout_seconds, value: 30, value_type: number, scope: {time: current}, modality: OBSERVED, cardinality: SINGLE, evidence_ids: [E1]}
     - {subject: api, predicate: timeout_seconds, value: 45, value_type: number, scope: {time: current}, modality: OBSERVED, cardinality: SINGLE, evidence_ids: [E2]}
-  gold_relations: [CONFLICTING]
+  gold_relations:
+    - {left_evidence_ids: [E1], right_evidence_ids: [E2], relation: CONFLICTING}
   gold_summary: UNRESOLVED
   reason: current timeout values conflict
 - case_id: D1
@@ -87,7 +93,8 @@
   gold_claims:
     - {subject: auth, predicate: protocol, value: JWT, value_type: enum, scope: {time: current}, modality: OBSERVED, cardinality: SINGLE, evidence_ids: [E1]}
     - {subject: auth, predicate: protocol, value: OAuth2, value_type: enum, scope: {time: future}, modality: INTENDED, cardinality: SINGLE, evidence_ids: [E2]}
-  gold_relations: [COMPATIBLE]
+  gold_relations:
+    - {left_evidence_ids: [E1], right_evidence_ids: [E2], relation: COMPATIBLE}
   gold_summary: CLEAR
   reason: current and future scopes do not overlap
 - case_id: D2
@@ -100,7 +107,8 @@
   gold_claims:
     - {subject: service, predicate: version, value: v1, value_type: string, scope: {release: v1}, modality: OBSERVED, cardinality: SINGLE, evidence_ids: [E1]}
     - {subject: service, predicate: version, value: v2, value_type: string, scope: {release: v2}, modality: INTENDED, cardinality: SINGLE, evidence_ids: [E2]}
-  gold_relations: [COMPATIBLE]
+  gold_relations:
+    - {left_evidence_ids: [E1], right_evidence_ids: [E2], relation: COMPATIBLE}
   gold_summary: CLEAR
   reason: release scopes do not overlap
 - case_id: E1
@@ -113,7 +121,8 @@
   gold_claims:
     - {subject: service, predicate: endpoint, value: staging-v1, value_type: string, scope: {environment: staging}, modality: OBSERVED, cardinality: SINGLE, evidence_ids: [E1]}
     - {subject: service, predicate: endpoint, value: prod-v2, value_type: string, scope: {environment: production}, modality: OBSERVED, cardinality: SINGLE, evidence_ids: [E2]}
-  gold_relations: [COMPATIBLE]
+  gold_relations:
+    - {left_evidence_ids: [E1], right_evidence_ids: [E2], relation: COMPATIBLE}
   gold_summary: CLEAR
   reason: environment scopes differ
 - case_id: E2
@@ -126,7 +135,8 @@
   gold_claims:
     - {subject: records, predicate: retention, value: 30, value_type: number, scope: {region: US}, modality: REQUIRED, cardinality: SINGLE, evidence_ids: [E1]}
     - {subject: records, predicate: retention, value: 90, value_type: number, scope: {region: EU}, modality: REQUIRED, cardinality: SINGLE, evidence_ids: [E2]}
-  gold_relations: [COMPATIBLE]
+  gold_relations:
+    - {left_evidence_ids: [E1], right_evidence_ids: [E2], relation: COMPATIBLE}
   gold_summary: CLEAR
   reason: region scopes differ
 - case_id: F1
@@ -139,7 +149,8 @@
   gold_claims:
     - {subject: product, predicate: supported_region, value: US, value_type: enum, scope: {time: current}, modality: OBSERVED, cardinality: MULTI, evidence_ids: [E1]}
     - {subject: product, predicate: supported_region, value: EU, value_type: enum, scope: {time: current}, modality: OBSERVED, cardinality: MULTI, evidence_ids: [E2]}
-  gold_relations: [COMPATIBLE]
+  gold_relations:
+    - {left_evidence_ids: [E1], right_evidence_ids: [E2], relation: COMPATIBLE}
   gold_summary: CLEAR
   reason: multi-valued region attribute
 - case_id: F2
@@ -152,7 +163,8 @@
   gold_claims:
     - {subject: user, predicate: admin_role, value: owner, value_type: enum, scope: {time: current}, modality: OBSERVED, cardinality: MULTI, evidence_ids: [E1]}
     - {subject: user, predicate: admin_role, value: auditor, value_type: enum, scope: {time: current}, modality: OBSERVED, cardinality: MULTI, evidence_ids: [E2]}
-  gold_relations: [COMPATIBLE]
+  gold_relations:
+    - {left_evidence_ids: [E1], right_evidence_ids: [E2], relation: COMPATIBLE}
   gold_summary: CLEAR
   reason: multiple roles can coexist
 - case_id: G1
@@ -165,7 +177,8 @@
   gold_claims:
     - {subject: auth, predicate: protocol, value: JWT, value_type: enum, scope: {time: current}, modality: OBSERVED, cardinality: SINGLE, evidence_ids: [E1]}
     - {subject: auth, predicate: protocol, value: OAuth2, value_type: enum, scope: {time: current}, modality: REQUIRED, cardinality: SINGLE, evidence_ids: [E2]}
-  gold_relations: [DIVERGENT]
+  gold_relations:
+    - {left_evidence_ids: [E1], right_evidence_ids: [E2], relation: DIVERGENT}
   gold_summary: UNRESOLVED
   reason: current runtime does not meet current requirement
 - case_id: G2
@@ -178,7 +191,8 @@
   gold_claims:
     - {subject: service, predicate: replica_count, value: 3, value_type: number, scope: {time: current}, modality: OBSERVED, cardinality: SINGLE, evidence_ids: [E1]}
     - {subject: service, predicate: replica_count, value: 6, value_type: number, scope: {time: current}, modality: REQUIRED, cardinality: SINGLE, evidence_ids: [E2]}
-  gold_relations: [DIVERGENT]
+  gold_relations:
+    - {left_evidence_ids: [E1], right_evidence_ids: [E2], relation: DIVERGENT}
   gold_summary: UNRESOLVED
   reason: runtime replicas do not meet current requirement
 - case_id: H1
@@ -191,7 +205,8 @@
   gold_claims:
     - {subject: records, predicate: retention, value: 30, value_type: number, scope: {region: EU}, modality: REQUIRED, cardinality: SINGLE, evidence_ids: [E1]}
     - {subject: records, predicate: retention, value: 90, value_type: number, scope: {region: unknown}, modality: REQUIRED, cardinality: SINGLE, evidence_ids: [E2]}
-  gold_relations: [UNKNOWN]
+  gold_relations:
+    - {left_evidence_ids: [E1], right_evidence_ids: [E2], relation: UNKNOWN}
   gold_summary: UNRESOLVED
   reason: partial scope overlap is unknown
 - case_id: H2
@@ -204,7 +219,8 @@
   gold_claims:
     - {subject: auth, predicate: protocol, value: JWT, value_type: enum, scope: {time: current}, modality: DOCUMENTED, cardinality: SINGLE, evidence_ids: [E1]}
     - {subject: auth, predicate: protocol, value: OAuth2, value_type: enum, scope: {time: current}, modality: INTENDED, cardinality: SINGLE, evidence_ids: [E2]}
-  gold_relations: [UNKNOWN]
+  gold_relations:
+    - {left_evidence_ids: [E1], right_evidence_ids: [E2], relation: UNKNOWN}
   gold_summary: UNRESOLVED
   reason: DOCUMENTED is not automatically current state
 - case_id: I1
@@ -217,7 +233,8 @@
   gold_claims:
     - {subject: records, predicate: retention, value: 30, value_type: number, scope: {region: EU}, modality: REQUIRED, cardinality: SINGLE, evidence_ids: [E1]}
     - {subject: records, predicate: retention, value: 90, value_type: number, scope: {region: EU}, modality: REQUIRED, cardinality: SINGLE, evidence_ids: [E2]}
-  gold_relations: [CONFLICTING]
+  gold_relations:
+    - {left_evidence_ids: [E1], right_evidence_ids: [E2], relation: CONFLICTING}
   gold_summary: UNRESOLVED
   reason: same condition has two required values
 - case_id: I2
@@ -230,7 +247,8 @@
   gold_claims:
     - {subject: payments, predicate: limit, value: 100, value_type: number, scope: {region: US}, modality: REQUIRED, cardinality: SINGLE, evidence_ids: [E1]}
     - {subject: payments, predicate: limit, value: 200, value_type: number, scope: {region: US}, modality: REQUIRED, cardinality: SINGLE, evidence_ids: [E2]}
-  gold_relations: [CONFLICTING]
+  gold_relations:
+    - {left_evidence_ids: [E1], right_evidence_ids: [E2], relation: CONFLICTING}
   gold_summary: UNRESOLVED
   reason: same condition has two required limits
 - case_id: J1
@@ -243,7 +261,8 @@
   gold_claims:
     - {subject: records, predicate: retention, value: 30, value_type: number, scope: {region: EU}, modality: REQUIRED, cardinality: SINGLE, evidence_ids: [E1]}
     - {subject: records, predicate: retention, value: 90, value_type: number, scope: {region: US}, modality: REQUIRED, cardinality: SINGLE, evidence_ids: [E2]}
-  gold_relations: [COMPATIBLE]
+  gold_relations:
+    - {left_evidence_ids: [E1], right_evidence_ids: [E2], relation: COMPATIBLE}
   gold_summary: CLEAR
   reason: conditional scopes differ
 - case_id: J2
@@ -256,7 +275,8 @@
   gold_claims:
     - {subject: service, predicate: max_retry, value: 3, value_type: number, scope: {environment: staging}, modality: OBSERVED, cardinality: SINGLE, evidence_ids: [E1]}
     - {subject: service, predicate: max_retry, value: 5, value_type: number, scope: {environment: production}, modality: OBSERVED, cardinality: SINGLE, evidence_ids: [E2]}
-  gold_relations: [COMPATIBLE]
+  gold_relations:
+    - {left_evidence_ids: [E1], right_evidence_ids: [E2], relation: COMPATIBLE}
   gold_summary: CLEAR
   reason: environment scopes differ
 - case_id: K1
@@ -269,7 +289,8 @@
   gold_claims:
     - {subject: Spring Gala, predicate: event_date, value: "2026-03-22", value_type: date, scope: {time: current}, modality: OBSERVED, cardinality: SINGLE, evidence_ids: [E1]}
     - {subject: Spring Gala, predicate: event_date, value: "2026-03-22", value_type: date, scope: {time: current}, modality: OBSERVED, cardinality: SINGLE, evidence_ids: [E2]}
-  gold_relations: [SUPPORTING]
+  gold_relations:
+    - {left_evidence_ids: [E1], right_evidence_ids: [E2], relation: SUPPORTING}
   gold_summary: CLEAR
   reason: predicate paraphrase with equal date
 - case_id: K2
@@ -282,7 +303,8 @@
   gold_claims:
     - {subject: service, predicate: max_retry, value: 3, value_type: number, scope: {time: current}, modality: OBSERVED, cardinality: SINGLE, evidence_ids: [E1]}
     - {subject: service, predicate: max_retry, value: 3, value_type: number, scope: {time: current}, modality: OBSERVED, cardinality: SINGLE, evidence_ids: [E2]}
-  gold_relations: [SUPPORTING]
+  gold_relations:
+    - {left_evidence_ids: [E1], right_evidence_ids: [E2], relation: SUPPORTING}
   gold_summary: CLEAR
   reason: predicate paraphrase with equal number
 - case_id: L1
@@ -295,7 +317,8 @@
   gold_claims:
     - {subject: Aurora, predicate: owner, value: Alice, value_type: string, scope: {time: current}, modality: DOCUMENTED, cardinality: SINGLE, evidence_ids: [E1]}
     - {subject: Aurora, predicate: owner, value: Alice, value_type: string, scope: {time: current}, modality: DOCUMENTED, cardinality: SINGLE, evidence_ids: [E2]}
-  gold_relations: [SUPPORTING]
+  gold_relations:
+    - {left_evidence_ids: [E1], right_evidence_ids: [E2], relation: SUPPORTING}
   gold_summary: CLEAR
   reason: entity alias with equal value
 - case_id: L2
@@ -308,7 +331,8 @@
   gold_claims:
     - {subject: Riverside Community Hall, predicate: capacity, value: 200, value_type: number, scope: {time: current}, modality: DOCUMENTED, cardinality: SINGLE, evidence_ids: [E1]}
     - {subject: Riverside Community Hall, predicate: capacity, value: 200, value_type: number, scope: {time: current}, modality: DOCUMENTED, cardinality: SINGLE, evidence_ids: [E2]}
-  gold_relations: [SUPPORTING]
+  gold_relations:
+    - {left_evidence_ids: [E1], right_evidence_ids: [E2], relation: SUPPORTING}
   gold_summary: CLEAR
   reason: entity alias with equal value
 - case_id: M1
@@ -363,7 +387,8 @@
   gold_claims:
     - {subject: product, predicate: supported_region, value: US, value_type: enum, scope: {time: current}, modality: OBSERVED, cardinality: UNKNOWN, evidence_ids: [E1]}
     - {subject: product, predicate: supported_region, value: EU, value_type: enum, scope: {time: current}, modality: OBSERVED, cardinality: UNKNOWN, evidence_ids: [E2]}
-  gold_relations: [UNKNOWN]
+  gold_relations:
+    - {left_evidence_ids: [E1], right_evidence_ids: [E2], relation: UNKNOWN}
   gold_summary: UNRESOLVED
   reason: unknown cardinality cannot default to single or multi
 - case_id: O2
@@ -376,7 +401,8 @@
   gold_claims:
     - {subject: project, predicate: admin_contact, value: Alice, value_type: string, scope: {time: current}, modality: OBSERVED, cardinality: UNKNOWN, evidence_ids: [E1]}
     - {subject: project, predicate: admin_contact, value: Bob, value_type: string, scope: {time: current}, modality: OBSERVED, cardinality: UNKNOWN, evidence_ids: [E2]}
-  gold_relations: [UNKNOWN]
+  gold_relations:
+    - {left_evidence_ids: [E1], right_evidence_ids: [E2], relation: UNKNOWN}
   gold_summary: UNRESOLVED
   reason: unknown cardinality cannot establish a conflict
 - case_id: P1
@@ -394,7 +420,9 @@
     - {subject: service, predicate: enabled, value: false, value_type: boolean, scope: {time: current}, modality: OBSERVED, cardinality: SINGLE, evidence_ids: [E2]}
     - {subject: service, predicate: max_retry, value: 3, value_type: number, scope: {time: current}, modality: OBSERVED, cardinality: SINGLE, evidence_ids: [E3]}
     - {subject: service, predicate: max_retry, value: 5, value_type: number, scope: {time: current}, modality: OBSERVED, cardinality: SINGLE, evidence_ids: [E4]}
-  gold_relations: [CONFLICTING, CONFLICTING]
+  gold_relations:
+    - {left_evidence_ids: [E1], right_evidence_ids: [E2], relation: CONFLICTING}
+    - {left_evidence_ids: [E3], right_evidence_ids: [E4], relation: CONFLICTING}
   gold_summary: UNRESOLVED
   reason: two independent scalar conflicts
 - case_id: P2
@@ -412,7 +440,9 @@
     - {subject: security, predicate: retention, value: 90, value_type: number, scope: {region: EU}, modality: REQUIRED, cardinality: SINGLE, evidence_ids: [E2]}
     - {subject: security, predicate: mfa_required, value: true, value_type: boolean, scope: {time: current}, modality: REQUIRED, cardinality: SINGLE, evidence_ids: [E3]}
     - {subject: security, predicate: mfa_required, value: false, value_type: boolean, scope: {time: current}, modality: REQUIRED, cardinality: SINGLE, evidence_ids: [E4]}
-  gold_relations: [CONFLICTING, CONFLICTING]
+  gold_relations:
+    - {left_evidence_ids: [E1], right_evidence_ids: [E2], relation: CONFLICTING}
+    - {left_evidence_ids: [E3], right_evidence_ids: [E4], relation: CONFLICTING}
   gold_summary: UNRESOLVED
   reason: two independent policy conflicts
 - case_id: Q1
@@ -425,7 +455,8 @@
   gold_claims:
     - {subject: Spring Gala, predicate: event_date, value: "2026-03-22", value_type: date, scope: {time: current}, modality: OBSERVED, cardinality: SINGLE, evidence_ids: [E1]}
     - {subject: Spring Gala, predicate: event_date, value: "2026-03-22", value_type: date, scope: {time: current}, modality: OBSERVED, cardinality: SINGLE, evidence_ids: [E2]}
-  gold_relations: [SUPPORTING]
+  gold_relations:
+    - {left_evidence_ids: [E1], right_evidence_ids: [E2], relation: SUPPORTING}
   gold_summary: CLEAR
   reason: irrelevant text does not change equal date support
 - case_id: Q2
@@ -449,7 +480,8 @@
   gold_claims:
     - {subject: service, predicate: max_retry, value: 3, value_type: number, scope: {time: current}, modality: OBSERVED, cardinality: SINGLE, evidence_ids: [E1]}
     - {subject: service, predicate: max_retry, value: 3, value_type: number, scope: {time: current}, modality: OBSERVED, cardinality: SINGLE, evidence_ids: [E2]}
-  gold_relations: [SUPPORTING]
+  gold_relations:
+    - {left_evidence_ids: [E1], right_evidence_ids: [E2], relation: SUPPORTING}
   gold_summary: CLEAR
   reason: compiler has already normalized both values to number 3
 - case_id: R2
@@ -462,6 +494,7 @@
   gold_claims:
     - {subject: feature, predicate: enabled, value: true, value_type: boolean, scope: {time: current}, modality: OBSERVED, cardinality: SINGLE, evidence_ids: [E1]}
     - {subject: feature, predicate: enabled, value: true, value_type: boolean, scope: {time: current}, modality: OBSERVED, cardinality: SINGLE, evidence_ids: [E2]}
-  gold_relations: [SUPPORTING]
+  gold_relations:
+    - {left_evidence_ids: [E1], right_evidence_ids: [E2], relation: SUPPORTING}
   gold_summary: CLEAR
   reason: compiler has normalized enabled to boolean true

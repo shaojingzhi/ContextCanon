@@ -35,9 +35,9 @@ def _value(value: Any, value_type: str) -> tuple[bool, Any]:
             return True, value
         if isinstance(value, str):
             normalized = _canonical(value)
-            if normalized in {"true", "enabled", "yes"}:
+            if normalized == "true":
                 return True, True
-            if normalized in {"false", "disabled", "no"}:
+            if normalized == "false":
                 return True, False
         return False, None
     if kind == "number":
@@ -74,15 +74,21 @@ def _unknown_scope(scope: dict[str, Any]) -> bool:
         value is None
         or (isinstance(value, str) and _canonical(value) in {"unknown", "?"})
         for value in scope.values()
-    ) or scope.get("overlap") == "unknown"
+    )
 
 
 def _scope_overlap(left: dict[str, Any], right: dict[str, Any]) -> str:
-    if _unknown_scope(left) or _unknown_scope(right):
-        return "UNKNOWN"
     for key in set(left) & set(right):
-        if _canonical(str(left[key])) != _canonical(str(right[key])):
+        left_unknown = left[key] is None or (
+            isinstance(left[key], str) and _canonical(left[key]) in {"unknown", "?"}
+        )
+        right_unknown = right[key] is None or (
+            isinstance(right[key], str) and _canonical(right[key]) in {"unknown", "?"}
+        )
+        if not left_unknown and not right_unknown and _canonical(str(left[key])) != _canonical(str(right[key])):
             return "NO"
+    if _unknown_scope(left) or _unknown_scope(right) or set(left) != set(right):
+        return "UNKNOWN"
     return "YES"
 
 
@@ -90,7 +96,7 @@ def _scope_matches(claim: Claim, need: FactNeed) -> bool:
     if need.scope_constraint is None:
         return True
     overlap = _scope_overlap(claim.scope, need.scope_constraint)
-    return overlap != "NO"
+    return overlap == "YES"
 
 
 def _same_dimension(left: Claim, right: Claim) -> bool:

@@ -58,7 +58,7 @@ class V2GovernanceTests(unittest.TestCase):
                 claims, needs = _load_case(case)
                 result = govern(claims, needs)
                 actual = sorted(record.relation.value for record in result.relations)
-                expected = sorted(case["gold_relations"])
+                expected = sorted(item["relation"] for item in case["gold_relations"])
                 self.assertEqual(actual, expected)
                 self.assertEqual(result.summary_state.value, case["gold_summary"])
 
@@ -77,6 +77,40 @@ class V2GovernanceTests(unittest.TestCase):
                 for item in case["gold_claims"]
             ]
             self.assertEqual([claim.evidence_ids for claim in claims], expected)
+
+    def test_gold_claim_provenance_references_existing_evidence(self) -> None:
+        for case in self.cases:
+            with self.subTest(case=case["case_id"]):
+                evidence_ids = {item["evidence_id"] for item in case["evidence"]}
+                for claim in case["gold_claims"]:
+                    self.assertTrue(set(claim["evidence_ids"]) <= evidence_ids)
+
+    def test_gold_relations_match_provenance_endpoints(self) -> None:
+        for case in self.cases:
+            with self.subTest(case=case["case_id"]):
+                claims, needs = _load_case(case)
+                result = govern(claims, needs)
+                actual = {
+                    (
+                        tuple(sorted(record.left_claim.evidence_ids)),
+                        tuple(sorted(record.right_claim.evidence_ids)),
+                        record.relation.value,
+                    )
+                    for record in result.relations
+                }
+                actual = {
+                    (min(left, right), max(left, right), relation)
+                    for left, right, relation in actual
+                }
+                expected = {
+                    (
+                        min(tuple(sorted(item["left_evidence_ids"])), tuple(sorted(item["right_evidence_ids"]))),
+                        max(tuple(sorted(item["left_evidence_ids"])), tuple(sorted(item["right_evidence_ids"]))),
+                        item["relation"],
+                    )
+                    for item in case["gold_relations"]
+                }
+                self.assertEqual(actual, expected)
 
     def test_unrelated_subject_and_predicate_do_not_create_relations(self) -> None:
         claims = [
@@ -203,6 +237,35 @@ class V2GovernanceTests(unittest.TestCase):
             Claim("auth", "protocol", "OAuth2", "enum", {"time": "future"}, Modality.INTENDED, Cardinality.SINGLE, ("e2",)),
         ]
         self.assertEqual(govern(claims, (FactNeed("auth", "protocol"),)).relations[0].relation, Relation.COMPATIBLE)
+
+    def test_known_disjoint_scope_qualifier_beats_unknown_qualifier(self) -> None:
+        claims = [
+            Claim("service", "region", "value-a", "enum", {"region": "EU", "time": "unknown"}, Modality.OBSERVED, Cardinality.SINGLE, ("e1",)),
+            Claim("service", "region", "value-b", "enum", {"region": "US", "time": "current"}, Modality.OBSERVED, Cardinality.SINGLE, ("e2",)),
+        ]
+        result = govern(claims, (FactNeed("service", "region"),))
+        self.assertEqual(result.relations[0].relation, Relation.COMPATIBLE)
+
+    def test_partial_scope_qualifiers_have_unknown_overlap(self) -> None:
+        claims = [
+            Claim("service", "region", "EU", "enum", {"region": "EU"}, Modality.OBSERVED, Cardinality.SINGLE, ("e1",)),
+            Claim("service", "region", "US", "enum", {"region": "EU", "time": "current"}, Modality.OBSERVED, Cardinality.SINGLE, ("e2",)),
+        ]
+        result = govern(claims, (FactNeed("service", "region"),))
+        self.assertEqual(result.relations[0].relation, Relation.UNKNOWN)
+
+    def test_unknown_scope_cannot_satisfy_scoped_fact_need(self) -> None:
+        claim = Claim("auth", "protocol", "JWT", "enum", {"environment": "unknown"}, Modality.OBSERVED, Cardinality.SINGLE, ("e1",))
+        need = FactNeed("auth", "protocol", scope_constraint={"environment": "production"})
+        self.assertEqual(govern([claim], (need,)).summary_state, SummaryState.INCOMPLETE)
+
+    def test_boolean_words_are_not_semantically_normalized(self) -> None:
+        claims = [
+            Claim("feature", "enabled", True, "boolean", {"time": "current"}, Modality.OBSERVED, Cardinality.SINGLE, ("e1",)),
+            Claim("feature", "enabled", "enabled", "boolean", {"time": "current"}, Modality.OBSERVED, Cardinality.SINGLE, ("e2",)),
+        ]
+        result = govern(claims, (FactNeed("feature", "enabled", value_type="boolean"),))
+        self.assertEqual(result.relations[0].relation, Relation.UNKNOWN)
 
 
 if __name__ == "__main__":
