@@ -85,8 +85,25 @@ def _matches_need(claim: Claim, needs: Sequence[FactNeed]) -> bool:
         subject == _canonical(need.subject)
         and predicate == _canonical(need.dimension)
         and (need.value_type is None or value_type == _canonical(need.value_type))
+        and _scope_matches_need(claim, need)
         for need in needs
     )
+
+
+def _scope_matches_need(claim: Claim, need: FactNeed) -> bool:
+    if need.scope_constraint is None:
+        return True
+    for key, expected in need.scope_constraint.items():
+        if key not in claim.scope:
+            return False
+        actual = claim.scope[key]
+        if actual is None or (
+            isinstance(actual, str) and _canonical(actual) in _UNKNOWN_SCOPE_VALUES
+        ):
+            return False
+        if _canonical(str(actual)) != _canonical(str(expected)):
+            return False
+    return True
 
 
 def _prompt(evidence: Sequence[Evidence], needs: Sequence[FactNeed]) -> str:
@@ -125,7 +142,8 @@ def _prompt(evidence: Sequence[Evidence], needs: Sequence[FactNeed]) -> str:
     return "\n".join(
         (
             "Compile only semantic Claims relevant to the supplied FactNeeds.",
-            "Normalize synonymous subjects and predicates within this batch; do not invent facts.",
+            "For every emitted Claim, subject MUST exactly equal the canonical subject from one supplied FactNeed, and predicate MUST exactly equal the dimension from that same FactNeed.",
+            "Evidence wording may use aliases or paraphrases, but normalize them onto those supplied FactNeed labels; do not invent facts.",
             "Do not resolve contradictions, rank sources, or emit relations or summaries.",
             "Preserve uncertainty with UNKNOWN cardinality or limited scope when needed.",
             "Use only OBSERVED, DOCUMENTED, INTENDED, or REQUIRED modality.",
@@ -213,7 +231,12 @@ class SemanticCompiler:
         fact_needs = tuple(fact_needs)
         if not evidence or not fact_needs:
             return ()
-        return _parse(self._complete(_prompt(evidence, fact_needs)), evidence, fact_needs)
+        prompt = _prompt(evidence, fact_needs)
+        try:
+            response = self._complete(prompt)
+        except Exception as error:
+            raise SemanticCompilationError("semantic completion failed") from error
+        return _parse(response, evidence, fact_needs)
 
 
 __all__ = ["SemanticCompilationError", "SemanticCompiler"]

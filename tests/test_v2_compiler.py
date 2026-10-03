@@ -55,11 +55,15 @@ class V2CompilerTests(unittest.TestCase):
 
     def test_batch_normalizes_entity_and_predicate_aliases_via_contract(self) -> None:
         evidence = [_evidence("EVIDENCE-A", "The authentication method is JWT")]
-        compiler = SemanticCompiler(lambda _prompt: _response(_claim(subject="auth", predicate="protocol")))
+        prompts: list[str] = []
+        compiler = SemanticCompiler(lambda prompt: prompts.append(prompt) or _response(_claim(subject="auth", predicate="protocol")))
 
         claims = compiler.compile(evidence, (FactNeed("auth", "protocol", value_type="enum"),))
 
         self.assertEqual((claims[0].subject, claims[0].predicate), ("auth", "protocol"))
+        self.assertIn("subject MUST exactly equal the canonical subject", prompts[0])
+        self.assertIn("predicate MUST exactly equal the dimension", prompts[0])
+        self.assertIn("same FactNeed", prompts[0])
 
     def test_current_and_future_scope_and_modalities_are_preserved(self) -> None:
         evidence = [_evidence("current", "JWT now"), _evidence("future", "OAuth2 later")]
@@ -104,6 +108,31 @@ class V2CompilerTests(unittest.TestCase):
         self.assertEqual(len(claims), 1)
         self.assertEqual(claims[0].evidence_ids, ("auth-source",))
 
+    def test_scoped_fact_need_accepts_matching_claim_with_extra_qualifier(self) -> None:
+        evidence = [_evidence("prod", "production now")]
+        compiler = SemanticCompiler(
+            lambda _prompt: _response(
+                _claim(scope={"environment": "production", "time": "current"}),
+            )
+        )
+        claims = compiler.compile(
+            evidence,
+            (FactNeed("auth", "protocol", scope_constraint={"environment": "production"}),),
+        )
+        self.assertEqual(len(claims), 1)
+
+    def test_scoped_fact_need_rejects_conflicting_missing_and_unknown_claim_scope(self) -> None:
+        need = FactNeed("auth", "protocol", scope_constraint={"environment": "production"})
+        evidence = [_evidence("e1", "scope")]
+        for scope in (
+            {"environment": "staging"},
+            {"time": "current"},
+            {"environment": "unknown", "time": "current"},
+        ):
+            with self.subTest(scope=scope):
+                compiler = SemanticCompiler(lambda _prompt, scope=scope: _response(_claim(scope=scope)))
+                self.assertEqual(compiler.compile(evidence, (need,)), ())
+
     def test_multiple_fact_needs_produce_multiple_claims(self) -> None:
         evidence = [_evidence("enabled", "enabled"), _evidence("retry", "retry")]
         compiler = SemanticCompiler(
@@ -132,6 +161,16 @@ class V2CompilerTests(unittest.TestCase):
         compiler = SemanticCompiler(lambda _prompt: _response(_claim(evidence_refs=["E9"])))
         with self.assertRaises(SemanticCompilationError):
             compiler.compile([_evidence("e1", "JWT")], (FactNeed("auth", "protocol"),))
+
+    def test_transport_failure_is_wrapped_with_original_cause(self) -> None:
+        def fail(_prompt: str) -> str:
+            raise TimeoutError("provider timed out")
+
+        compiler = SemanticCompiler(fail)
+        with self.assertRaises(SemanticCompilationError) as raised:
+            compiler.compile([_evidence("e1", "JWT")], (FactNeed("auth", "protocol"),))
+        self.assertEqual(str(raised.exception), "semantic completion failed")
+        self.assertIsInstance(raised.exception.__cause__, TimeoutError)
 
     def test_missing_evidence_refs_fails_cleanly(self) -> None:
         compiler = SemanticCompiler(lambda _prompt: _response(_claim(evidence_refs=[])))
