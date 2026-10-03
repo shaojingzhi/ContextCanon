@@ -58,8 +58,8 @@
 - case_id: C1
   domain: operations
   evidence:
-    - {evidence_id: E1, source_id: runtime-a, location: retry, content: "retry=3"}
-    - {evidence_id: E2, source_id: runtime-b, location: retry, content: "retry=5"}
+    - {evidence_id: E1, source_id: policy-a, location: retry, content: "retry policy 3"}
+    - {evidence_id: E2, source_id: policy-b, location: retry, content: "retry policy 5"}
   fact_needs:
     - {subject: service, dimension: max_retry, value_type: number}
   gold_claims:
