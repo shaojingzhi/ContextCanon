@@ -58,7 +58,7 @@ class HarnessBridgeTests(unittest.IsolatedAsyncioTestCase):
             temporal_scope=TemporalScope.CURRENT.value,
         )
 
-    async def test_read_returns_before_slow_background_governance_finishes(self) -> None:
+    async def test_read_returns_without_semantic_extraction(self) -> None:
         class SlowExtractor:
             def extract(self, observation, context=None):
                 time.sleep(0.12)
@@ -89,8 +89,9 @@ class HarnessBridgeTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(governance.observations), 1)
         self.assertEqual(governance.store.facts, [])
         await bridge.drain_governance()
-        self.assertEqual(len(governance.store.facts), 1)
-        self.assertEqual(bridge.governance_work[0].state.value, "COMPLETE")
+        self.assertEqual(governance.store.facts, [])
+        self.assertEqual(governance.lazy_extraction_requests, 0)
+        self.assertEqual(bridge.governance_work, ())
 
     async def test_side_effect_waits_for_pending_relevant_governance(self) -> None:
         class SlowExtractor:
@@ -135,6 +136,63 @@ class HarnessBridgeTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(bridge.diagnostics.commit_dispatched, False)
         self.assertGreater(bridge.diagnostics.governance_barrier_wait_ms, 0)
         self.assertIn("Clarification is required", result["structuredContent"]["message"])
+
+    async def test_fact_need_materializes_only_relevant_raw_observation(self) -> None:
+        extracted: list[tuple[str, object]] = []
+
+        class Extractor:
+            def extract(self, observation, context=None):
+                extracted.append((observation.tool_name, context))
+                return [HarnessBridgeTests._candidate_for_observation(
+                    observation, "2026-03-22"
+                )]
+
+        governance = RuntimeGovernance(
+            extractor=Extractor(),
+            fact_need_extractor=object(),
+            store=GovernanceStore(),
+        )
+        governance.capture_observation(RuntimeObservation(
+            "filesystem.read_file", "lookup", {},
+            {"text": "Spring Gala date March 22, 2026"}, True, 1, None,
+        ))
+        governance.capture_observation(RuntimeObservation(
+            "filesystem.read_file", "lookup", {},
+            {"text": "recipient list only"}, True, 2, None,
+        ))
+        ingested = governance.materialize_relevant_observations((
+            FactNeed("Spring Gala", "event date", "date", TemporalScope.CURRENT),
+        ))
+        self.assertEqual(len(ingested), 1)
+        self.assertEqual([name for name, _context in extracted], ["filesystem.read_file"])
+        self.assertEqual(len(governance.observations), 2)
+        self.assertEqual(governance.raw_observations_selected_for_materialization, 1)
+        self.assertEqual(governance.raw_observations_skipped, 1)
+        self.assertEqual(governance.lazy_extraction_requests, 1)
+        context = extracted[0][1]
+        self.assertEqual(context.fact_needs[0]["subject_hint"], "Spring Gala")
+        self.assertEqual(ingested[0].evidence.provenance["tool_name"], "filesystem.read_file")
+
+    async def test_repeated_fact_need_materialization_uses_cache(self) -> None:
+        calls = 0
+
+        class Extractor:
+            def extract(self, observation, context=None):
+                nonlocal calls
+                calls += 1
+                return []
+
+        governance = RuntimeGovernance(
+            extractor=Extractor(), fact_need_extractor=object(), store=GovernanceStore()
+        )
+        governance.capture_observation(RuntimeObservation(
+            "filesystem.read_file", "lookup", {}, {"text": "Spring Gala date"}, True, 1, None
+        ))
+        needs = (FactNeed("Spring Gala", "event date"),)
+        governance.materialize_relevant_observations(needs)
+        governance.materialize_relevant_observations(needs)
+        self.assertEqual(calls, 1)
+        self.assertGreater(governance.lazy_extraction_cache_hits, 0)
 
     async def test_barrier_timeout_fails_closed(self) -> None:
         class SlowExtractor:

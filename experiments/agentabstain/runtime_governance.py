@@ -90,8 +90,14 @@ class RuntimeGovernance:
     tool_semantics_resolver: object | None = None
     observations: list[RuntimeObservation] = field(default_factory=list)
     _observation_fingerprints: set[str] = field(default_factory=set, init=False, repr=False)
-    _materialized_fingerprints: set[str] = field(default_factory=set, init=False, repr=False)
+    _materialized_keys: set[tuple[str, str]] = field(default_factory=set, init=False, repr=False)
     observation_failures: list[dict[str, object]] = field(default_factory=list)
+    raw_observations_selected_for_materialization: int = 0
+    raw_observations_skipped: int = 0
+    lazy_extraction_requests: int = 0
+    lazy_extraction_cache_hits: int = 0
+    claims_materialized: int = 0
+    fact_needs_count: int = 0
 
     @staticmethod
     def _observation_fingerprint(observation: RuntimeObservation) -> str:
@@ -137,6 +143,51 @@ class RuntimeGovernance:
             for need in needs
         )
 
+    @staticmethod
+    def _need_identity(needs: tuple[FactNeed, ...] | None) -> str:
+        payload = [
+            {
+                "subject_hint": need.subject_hint,
+                "semantic_dimension": need.semantic_dimension,
+                "expected_value_type": need.expected_value_type,
+                "temporal_scope": need.temporal_scope.value if need.temporal_scope else None,
+                "required": need.required,
+            }
+            for need in (needs or ())
+        ]
+        return json.dumps(payload, ensure_ascii=True, sort_keys=True, separators=(",", ":"))
+
+    @staticmethod
+    def _observation_text(observation: RuntimeObservation) -> str:
+        return json.dumps(
+            {
+                "tool_name": observation.tool_name,
+                "tool_kind": observation.tool_kind,
+                "tool_parameters": observation.tool_parameters,
+                "tool_result": observation.tool_result,
+            },
+            ensure_ascii=False,
+            sort_keys=True,
+            default=str,
+        ).casefold()
+
+    @classmethod
+    def _relevance_score(
+        cls,
+        observation: RuntimeObservation,
+        needs: tuple[FactNeed, ...],
+    ) -> int:
+        text = cls._observation_text(observation)
+        score = 0
+        for need in needs:
+            subject_tokens = set(need.subject_hint.casefold().split())
+            dimension_tokens = set(need.semantic_dimension.casefold().split())
+            score += 3 * sum(token in text for token in subject_tokens if len(token) > 2)
+            score += sum(token in text for token in dimension_tokens if len(token) > 2)
+            if observation.tool_kind == "verify":
+                score += 1
+        return score
+
     def materialize_observation(
         self,
         observation: RuntimeObservation,
@@ -149,14 +200,28 @@ class RuntimeGovernance:
         it in a task-local worker and keep the MCP read path responsive.
         """
         fingerprint = self._observation_fingerprint(observation)
-        if fingerprint in self._materialized_fingerprints:
+        need_identity = self._need_identity(needs)
+        cache_key = (fingerprint, need_identity)
+        if cache_key in self._materialized_keys:
+            self.lazy_extraction_cache_hits += 1
             return []
-        self._materialized_fingerprints.add(fingerprint)
+        self._materialized_keys.add(cache_key)
+        self.lazy_extraction_requests += 1
         ingested: list[EvidenceCandidate] = []
         semantic_hint = self._semantic_hint(needs)
         if semantic_hint is None and isinstance(self.action_context, str):
             semantic_hint = self.action_context
-        context = ExtractionContext(semantic_hint)
+        fact_needs = tuple(
+            {
+                "subject_hint": need.subject_hint,
+                "semantic_dimension": need.semantic_dimension,
+                "expected_value_type": need.expected_value_type,
+                "temporal_scope": need.temporal_scope.value if need.temporal_scope else None,
+                "required": need.required,
+            }
+            for need in (needs or ())
+        )
+        context = ExtractionContext(semantic_hint, fact_needs)
         for raw_candidate in self.extractor.extract(observation, context):
             candidate = normalize_candidate(raw_candidate)
             if candidate is None:
@@ -164,6 +229,31 @@ class RuntimeGovernance:
             evidence_candidate = _evidence_candidate(candidate)
             self.store.ingest(evidence_candidate)
             ingested.append(evidence_candidate)
+        self.claims_materialized += len(ingested)
+        return ingested
+
+    def materialize_relevant_observations(
+        self,
+        needs: tuple[FactNeed, ...],
+        *,
+        candidate_limit: int = 8,
+    ) -> list[EvidenceCandidate]:
+        """Materialize only raw observations relevant to the current FactNeed."""
+        self.fact_needs_count += len(needs)
+        if not needs:
+            return []
+        candidates = [observation for observation in self.observations if observation.success]
+        ranked = sorted(
+            enumerate(candidates),
+            key=lambda item: (-self._relevance_score(item[1], needs), item[1].call_index, item[0]),
+        )
+        positive = [item for item in ranked if self._relevance_score(item[1], needs) > 0]
+        selected = (positive or ranked)[:candidate_limit]
+        self.raw_observations_selected_for_materialization += len(selected)
+        self.raw_observations_skipped += len(self.observations) - len(selected)
+        ingested: list[EvidenceCandidate] = []
+        for _index, observation in selected:
+            ingested.extend(self.materialize_observation(observation, needs=needs))
         return ingested
 
     def observe(self, observation: RuntimeObservation) -> list[EvidenceCandidate]:
@@ -243,6 +333,13 @@ class RuntimeGovernance:
             tool_semantics, "prepare_model_requests", 0
         )
         metrics.update({
+            "raw_observations_total": len(self.observations),
+            "raw_observations_selected_for_materialization": self.raw_observations_selected_for_materialization,
+            "raw_observations_skipped": self.raw_observations_skipped,
+            "lazy_extraction_requests": self.lazy_extraction_requests,
+            "lazy_extraction_cache_hits": self.lazy_extraction_cache_hits,
+            "claims_materialized": self.claims_materialized,
+            "fact_needs_count": self.fact_needs_count,
             "fast_path_alignment_hits": getattr(aligner, "fast_path_hits", 0),
             "alignment_candidates_considered": getattr(
                 aligner, "alignment_candidates_considered", 0

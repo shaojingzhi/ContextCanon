@@ -353,17 +353,9 @@ class RuntimeMCPBridge:
             error=error,
         )
         if self.governance is not None:
-            _fingerprint, is_new = self.governance.capture_observation(observation)
+            _fingerprint, _is_new = self.governance.capture_observation(observation)
             claims: list[Any] = []
             conflicts = self.governance.conflicts_detected
-            if is_new:
-                work = GovernanceWork(observation)
-                self._governance_work.append(work)
-                self.diagnostics.pending_governance_count = sum(
-                    item.state is GovernanceWorkState.PENDING
-                    for item in self._governance_work
-                )
-                work.task = asyncio.create_task(self._process_governance(work))
         else:
             assert self.adapter is not None
             claims = self.adapter.observe_tool_result(observation)
@@ -418,6 +410,19 @@ class RuntimeMCPBridge:
                 asyncio.to_thread(self.governance.extract_action_needs, proposed),
                 timeout=remaining(),
             )
+            materialize_started = monotonic()
+            await asyncio.wait_for(
+                asyncio.to_thread(
+                    self.governance.materialize_relevant_observations,
+                    extraction.needs,
+                ),
+                timeout=remaining(),
+            )
+            self.diagnostics.governance_barrier_wait_ms += round(
+                (monotonic() - materialize_started) * 1000
+            )
+            self.diagnostics.claims_created = self.governance.claims_materialized
+            self.diagnostics.conflicts_detected = self.governance.conflicts_detected
             barrier_ok = await self._await_governance_barrier(
                 extraction.needs,
                 timeout=remaining(),
@@ -429,6 +434,18 @@ class RuntimeMCPBridge:
                 timeout=remaining(),
             )
         except TimeoutError:
+            if self.governance.budget is not None:
+                self.governance.budget.governance_incomplete = True
+            return ActionGovernanceResult(
+                ActionGovernanceDecision.REQUIRE_CLARIFICATION
+            )
+        except Exception as exc:
+            if self.governance.budget is not None:
+                self.governance.budget.governance_incomplete = True
+            self.diagnostics.background_governance_failures += 1
+            self.diagnostics.background_governance_errors.append(
+                f"{type(exc).__name__}: {exc}"
+            )
             return ActionGovernanceResult(
                 ActionGovernanceDecision.REQUIRE_CLARIFICATION
             )

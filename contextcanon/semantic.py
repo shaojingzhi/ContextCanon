@@ -67,6 +67,7 @@ class ClaimCandidate:
 @dataclass(frozen=True, slots=True)
 class ExtractionContext:
     semantic_hint: str | None = None
+    fact_needs: tuple[dict[str, JSONValue], ...] = ()
 
 
 class SemanticExtractor(Protocol):
@@ -521,10 +522,17 @@ class LLMStructuredExtractor:
             "tool_result": sanitize_runtime_value(getattr(observation, "tool_result", None)),
         }
         hint = context.semantic_hint if context is not None else None
+        fact_needs = context.fact_needs if context is not None else ()
         safe_hint = hint.strip() if isinstance(hint, str) and hint.strip() else None
         if safe_hint and any(key in safe_hint.casefold() for key in _FORBIDDEN_KEYS):
             safe_hint = None
         hint_text = f"\nOptional semantic hint: {safe_hint}" if safe_hint else ""
+        fact_need_text = (
+            "\nRequested fact needs (extract only claims relevant to these needs):\n"
+            + json.dumps(fact_needs, ensure_ascii=False, sort_keys=True)
+            if fact_needs
+            else ""
+        )
         return (
             "Extract factual claims explicitly supported by this runtime observation. "
             "Do not resolve conflicts, choose a source, infer action safety, or invent facts. "
@@ -544,6 +552,7 @@ class LLMStructuredExtractor:
             "ID as a separate property only when it is itself useful. Return "
             "an empty claims array when no useful fact is supported."
             + hint_text
+            + fact_need_text
             + "\nObservation:\n"
             + json.dumps(payload, ensure_ascii=False, sort_keys=True, indent=2)
         )
