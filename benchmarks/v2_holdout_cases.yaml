@@ -7,8 +7,8 @@
   fact_needs:
     - {subject: triage_queue, dimension: wait_minutes, value_type: number}
   gold_claims:
-    - {subject: triage_queue, predicate: wait_minutes, value: 18, value_type: number, scope: {}, modality: OBSERVED, cardinality: SINGLE, evidence_ids: [E1]}
-    - {subject: triage_queue, predicate: wait_minutes, value: 27, value_type: number, scope: {}, modality: OBSERVED, cardinality: SINGLE, evidence_ids: [E2]}
+    - {subject: triage_queue, predicate: wait_minutes, value: 18, value_type: number, scope: {time: current}, modality: OBSERVED, cardinality: SINGLE, evidence_ids: [E1]}
+    - {subject: triage_queue, predicate: wait_minutes, value: 27, value_type: number, scope: {time: current}, modality: OBSERVED, cardinality: SINGLE, evidence_ids: [E2]}
   gold_relations:
     - {left_evidence_ids: [E1], right_evidence_ids: [E2], relation: CONFLICTING}
   gold_summary: UNRESOLVED
@@ -31,7 +31,7 @@
   domain: healthcare
   evidence:
     - {evidence_id: E1, source_id: source-a, location: dosage, content: "current dosage is 5 mg"}
-    - {evidence_id: E2, source_id: source-b, location: dosage, content: "required dosage is 10 mg"}
+    - {evidence_id: E2, source_id: source-b, location: dosage, content: "dosage must currently be 10 mg"}
   fact_needs:
     - {subject: medication, dimension: dosage_mg, value_type: number}
   gold_claims:
@@ -86,7 +86,7 @@
 - case_id: H07
   domain: agriculture
   evidence:
-    - {evidence_id: E1, source_id: source-a, location: humidity, content: "greenhouse humidity setpoint is 55"}
+    - {evidence_id: E1, source_id: source-a, location: humidity, content: "documentation lists greenhouse humidity setpoint as 55"}
   fact_needs:
     - {subject: greenhouse, dimension: humidity_setpoint, value_type: number}
   gold_claims:
