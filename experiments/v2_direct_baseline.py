@@ -16,7 +16,7 @@ if __package__ in {None, ""}:  # Support direct script execution.
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from contextcanon.semantic import OpenAICompatibleExtractionClient, SemanticInferenceConfig
-from experiments.v2_real_benchmark import BenchmarkCase, load_cases
+from experiments.v2_real_benchmark import BENCHMARK, BenchmarkCase, load_cases
 
 
 ALLOWED_RELATIONS = {"SUPPORTING", "COMPATIBLE", "CONFLICTING", "DIVERGENT", "UNKNOWN"}
@@ -129,9 +129,9 @@ def _gold_relations(case: BenchmarkCase) -> list[dict[str, Any]]:
     ]
 
 
-def validate_cases(cases: tuple[BenchmarkCase, ...]) -> None:
-    if len(cases) != 36:
-        raise ValueError("baseline requires exactly 36 cases")
+def validate_cases(cases: tuple[BenchmarkCase, ...], *, expected_count: int = 36) -> None:
+    if len(cases) != expected_count:
+        raise ValueError(f"baseline requires exactly {expected_count} cases")
     for case in cases:
         refs = {item.evidence_id for item in case.evidence}
         if case.gold_summary not in ALLOWED_SUMMARIES:
@@ -255,10 +255,12 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--run-live", action="store_true")
     parser.add_argument("--model", default="deepseek-v4-pro")
+    parser.add_argument("--benchmark", type=Path, default=BENCHMARK)
+    parser.add_argument("--expected-count", type=int, default=36)
     args = parser.parse_args(argv)
 
-    cases = load_cases()
-    validate_cases(cases)
+    cases = load_cases(args.benchmark, expected_count=args.expected_count)
+    validate_cases(cases, expected_count=args.expected_count)
     if not args.run_live:
         print(json.dumps({
             "case_count": len(cases),

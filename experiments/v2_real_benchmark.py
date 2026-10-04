@@ -388,13 +388,15 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--run-live", action="store_true")
     parser.add_argument("--model", default="deepseek-v4-pro")
+    parser.add_argument("--benchmark", type=Path, default=BENCHMARK)
+    parser.add_argument("--expected-count", type=int, default=36)
     args = parser.parse_args(argv)
 
-    cases = load_cases()
+    cases = load_cases(args.benchmark, expected_count=args.expected_count)
     self_check = [evaluate_case(case, case.gold_claims) for case in cases]
     pass_count = sum(record["failure_classification"] == "PASS" for record in self_check)
-    if pass_count != 36:
-        raise SystemExit(f"Gold self-check failed: {pass_count}/36")
+    if pass_count != args.expected_count:
+        raise SystemExit(f"Gold self-check failed: {pass_count}/{args.expected_count}")
     if not args.run_live:
         print(json.dumps({
             "case_count": len(cases),
