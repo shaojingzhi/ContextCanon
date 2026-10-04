@@ -69,7 +69,11 @@ class BenchmarkCase:
     gold_summary: str
 
 
-def load_cases(path: Path = BENCHMARK) -> tuple[BenchmarkCase, ...]:
+def load_cases(
+    path: Path = BENCHMARK,
+    *,
+    expected_count: int | None = 36,
+) -> tuple[BenchmarkCase, ...]:
     raw_cases = yaml.safe_load(path.read_text(encoding="utf-8"))
     if not isinstance(raw_cases, list):
         raise ValueError("benchmark must contain a case list")
@@ -131,8 +135,10 @@ def load_cases(path: Path = BENCHMARK) -> tuple[BenchmarkCase, ...]:
         cases.append(BenchmarkCase(
             raw["case_id"], raw["domain"], evidence, needs, claims, relations, raw["gold_summary"]
         ))
-    if len(cases) != 36 or len({case.case_id for case in cases}) != 36:
-        raise ValueError("benchmark must contain 36 unique cases")
+    if len({case.case_id for case in cases}) != len(cases):
+        raise ValueError("benchmark must contain unique case IDs")
+    if expected_count is not None and len(cases) != expected_count:
+        raise ValueError(f"benchmark must contain {expected_count} cases")
     return tuple(cases)
 
 

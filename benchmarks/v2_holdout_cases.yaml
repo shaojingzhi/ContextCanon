@@ -1,0 +1,186 @@
+# Unseen V2 research holdout; keep separate from the frozen development benchmark.
+- case_id: H01
+  domain: healthcare
+  evidence:
+    - {evidence_id: E1, source_id: source-a, location: triage, content: "current triage wait is 18 minutes"}
+    - {evidence_id: E2, source_id: source-b, location: triage, content: "current triage wait is 27 minutes"}
+  fact_needs:
+    - {subject: triage_queue, dimension: wait_minutes, value_type: number}
+  gold_claims:
+    - {subject: triage_queue, predicate: wait_minutes, value: 18, value_type: number, scope: {}, modality: OBSERVED, cardinality: SINGLE, evidence_ids: [E1]}
+    - {subject: triage_queue, predicate: wait_minutes, value: 27, value_type: number, scope: {}, modality: OBSERVED, cardinality: SINGLE, evidence_ids: [E2]}
+  gold_relations:
+    - {left_evidence_ids: [E1], right_evidence_ids: [E2], relation: CONFLICTING}
+  gold_summary: UNRESOLVED
+  reason: two current scalar observations disagree
+- case_id: H02
+  domain: healthcare_policy
+  evidence:
+    - {evidence_id: E1, source_id: source-a, location: followup, content: "Canada follow-up schedule is 14 days"}
+    - {evidence_id: E2, source_id: source-b, location: followup, content: "Japan follow-up schedule is 21 days"}
+  fact_needs:
+    - {subject: clinic, dimension: followup_days, value_type: number}
+  gold_claims:
+    - {subject: clinic, predicate: followup_days, value: 14, value_type: number, scope: {region: Canada}, modality: DOCUMENTED, cardinality: SINGLE, evidence_ids: [E1]}
+    - {subject: clinic, predicate: followup_days, value: 21, value_type: number, scope: {region: Japan}, modality: DOCUMENTED, cardinality: SINGLE, evidence_ids: [E2]}
+  gold_relations:
+    - {left_evidence_ids: [E1], right_evidence_ids: [E2], relation: COMPATIBLE}
+  gold_summary: CLEAR
+  reason: region scopes are disjoint
+- case_id: H03
+  domain: healthcare
+  evidence:
+    - {evidence_id: E1, source_id: source-a, location: dosage, content: "current dosage is 5 mg"}
+    - {evidence_id: E2, source_id: source-b, location: dosage, content: "required dosage is 10 mg"}
+  fact_needs:
+    - {subject: medication, dimension: dosage_mg, value_type: number}
+  gold_claims:
+    - {subject: medication, predicate: dosage_mg, value: 5, value_type: number, scope: {time: current}, modality: OBSERVED, cardinality: SINGLE, evidence_ids: [E1]}
+    - {subject: medication, predicate: dosage_mg, value: 10, value_type: number, scope: {time: current}, modality: REQUIRED, cardinality: SINGLE, evidence_ids: [E2]}
+  gold_relations:
+    - {left_evidence_ids: [E1], right_evidence_ids: [E2], relation: DIVERGENT}
+  gold_summary: UNRESOLVED
+  reason: observed dosage differs from required dosage
+- case_id: H04
+  domain: healthcare_records
+  evidence:
+    - {evidence_id: E1, source_id: source-a, location: retention, content: "retention record lists 30 days"}
+    - {evidence_id: E2, source_id: source-b, location: retention, content: "retention record lists 90 days"}
+  fact_needs:
+    - {subject: patient_records, dimension: retention_days, value_type: number}
+  gold_claims:
+    - {subject: patient_records, predicate: retention_days, value: 30, value_type: number, scope: {}, modality: DOCUMENTED, cardinality: SINGLE, evidence_ids: [E1]}
+    - {subject: patient_records, predicate: retention_days, value: 90, value_type: number, scope: {}, modality: DOCUMENTED, cardinality: SINGLE, evidence_ids: [E2]}
+  gold_relations:
+    - {left_evidence_ids: [E1], right_evidence_ids: [E2], relation: UNKNOWN}
+  gold_summary: UNRESOLVED
+  reason: documented values do not establish an active conflict
+- case_id: H05
+  domain: localization
+  evidence:
+    - {evidence_id: E1, source_id: source-a, location: languages, content: "supported languages include Finnish"}
+    - {evidence_id: E2, source_id: source-b, location: languages, content: "supported languages include Swahili"}
+  fact_needs:
+    - {subject: portal, dimension: supported_language, value_type: enum}
+  gold_claims:
+    - {subject: portal, predicate: supported_language, value: Finnish, value_type: enum, scope: {}, modality: DOCUMENTED, cardinality: MULTI, evidence_ids: [E1]}
+    - {subject: portal, predicate: supported_language, value: Swahili, value_type: enum, scope: {}, modality: DOCUMENTED, cardinality: MULTI, evidence_ids: [E2]}
+  gold_relations:
+    - {left_evidence_ids: [E1], right_evidence_ids: [E2], relation: COMPATIBLE}
+  gold_summary: CLEAR
+  reason: multiple languages may coexist
+- case_id: H06
+  domain: governance_people
+  evidence:
+    - {evidence_id: E1, source_id: source-a, location: reviewer, content: "approved reviewer is Mina"}
+    - {evidence_id: E2, source_id: source-b, location: reviewer, content: "approved reviewer is Theo"}
+  fact_needs:
+    - {subject: project, dimension: reviewer, value_type: string}
+  gold_claims:
+    - {subject: project, predicate: reviewer, value: Mina, value_type: string, scope: {}, modality: DOCUMENTED, cardinality: UNKNOWN, evidence_ids: [E1]}
+    - {subject: project, predicate: reviewer, value: Theo, value_type: string, scope: {}, modality: DOCUMENTED, cardinality: UNKNOWN, evidence_ids: [E2]}
+  gold_relations:
+    - {left_evidence_ids: [E1], right_evidence_ids: [E2], relation: UNKNOWN}
+  gold_summary: UNRESOLVED
+  reason: cardinality of the reviewer field is unknown
+- case_id: H07
+  domain: agriculture
+  evidence:
+    - {evidence_id: E1, source_id: source-a, location: humidity, content: "greenhouse humidity setpoint is 55"}
+  fact_needs:
+    - {subject: greenhouse, dimension: humidity_setpoint, value_type: number}
+  gold_claims:
+    - {subject: greenhouse, predicate: humidity_setpoint, value: 55, value_type: number, scope: {}, modality: DOCUMENTED, cardinality: SINGLE, evidence_ids: [E1]}
+  gold_relations: []
+  gold_summary: CLEAR
+  reason: one usable fact is sufficient
+- case_id: H08
+  domain: finance_operations
+  evidence:
+    - {evidence_id: E1, source_id: source-a, location: cutoff, content: "cutoff is 7"}
+    - {evidence_id: E2, source_id: source-b, location: cutoff, content: "cutoff is seven"}
+  fact_needs:
+    - {subject: settlement, dimension: cutoff_count, value_type: number}
+  gold_claims:
+    - {subject: settlement, predicate: cutoff_count, value: 7, value_type: number, scope: {}, modality: DOCUMENTED, cardinality: SINGLE, evidence_ids: [E1, E2]}
+  gold_relations: []
+  gold_summary: CLEAR
+  reason: corroborating wording normalizes to one Claim
+- case_id: H09
+  domain: finance_records
+  evidence:
+    - {evidence_id: E1, source_id: source-a, location: inspection, content: "inspection date is April 8, 2027"}
+    - {evidence_id: E2, source_id: source-b, location: inspection, content: "inspection date is 2027-04-08"}
+  fact_needs:
+    - {subject: audit, dimension: inspection_date, value_type: date}
+  gold_claims:
+    - {subject: audit, predicate: inspection_date, value: "2027-04-08", value_type: date, scope: {}, modality: DOCUMENTED, cardinality: SINGLE, evidence_ids: [E1, E2]}
+  gold_relations: []
+  gold_summary: CLEAR
+  reason: equivalent date formats corroborate one Claim
+- case_id: H10
+  domain: logistics
+  evidence:
+    - {evidence_id: E1, source_id: source-a, location: quota, content: "zone unknown reports quota 12"}
+    - {evidence_id: E2, source_id: source-b, location: quota, content: "zone east reports quota 12"}
+  fact_needs:
+    - {subject: depot, dimension: quota, value_type: number}
+  gold_claims:
+    - {subject: depot, predicate: quota, value: 12, value_type: number, scope: {zone: unknown}, modality: DOCUMENTED, cardinality: SINGLE, evidence_ids: [E1]}
+    - {subject: depot, predicate: quota, value: 12, value_type: number, scope: {zone: east}, modality: DOCUMENTED, cardinality: SINGLE, evidence_ids: [E2]}
+  gold_relations:
+    - {left_evidence_ids: [E1], right_evidence_ids: [E2], relation: COMPATIBLE}
+  gold_summary: CLEAR
+  reason: unknown overlap with equal typed values is compatible
+- case_id: H11
+  domain: logistics
+  evidence:
+    - {evidence_id: E1, source_id: source-a, location: quota, content: "zone unknown reports quota 12"}
+    - {evidence_id: E2, source_id: source-b, location: quota, content: "zone east reports quota 18"}
+  fact_needs:
+    - {subject: depot, dimension: quota, value_type: number}
+  gold_claims:
+    - {subject: depot, predicate: quota, value: 12, value_type: number, scope: {zone: unknown}, modality: DOCUMENTED, cardinality: SINGLE, evidence_ids: [E1]}
+    - {subject: depot, predicate: quota, value: 18, value_type: number, scope: {zone: east}, modality: DOCUMENTED, cardinality: SINGLE, evidence_ids: [E2]}
+  gold_relations:
+    - {left_evidence_ids: [E1], right_evidence_ids: [E2], relation: UNKNOWN}
+  gold_summary: UNRESOLVED
+  reason: unknown overlap with unequal typed values remains unknown
+- case_id: H12
+  domain: logistics
+  evidence:
+    - {evidence_id: E1, source_id: source-a, location: aisle, content: "aisle 4 contains pallets"}
+  fact_needs:
+    - {subject: sensor, dimension: calibration_interval, value_type: number}
+  gold_claims: []
+  gold_relations: []
+  gold_summary: INCOMPLETE
+  reason: unrelated evidence cannot satisfy the required FactNeed
+- case_id: H13
+  domain: finance
+  evidence:
+    - {evidence_id: E1, source_id: source-a, location: settlement, content: "current settlement rail is SEPA"}
+    - {evidence_id: E2, source_id: source-b, location: settlement, content: "future settlement rail is FedNow"}
+  fact_needs:
+    - {subject: treasury, dimension: settlement_rail, value_type: enum}
+  gold_claims:
+    - {subject: treasury, predicate: settlement_rail, value: SEPA, value_type: enum, scope: {time: current}, modality: OBSERVED, cardinality: SINGLE, evidence_ids: [E1]}
+    - {subject: treasury, predicate: settlement_rail, value: FedNow, value_type: enum, scope: {time: future}, modality: INTENDED, cardinality: SINGLE, evidence_ids: [E2]}
+  gold_relations:
+    - {left_evidence_ids: [E1], right_evidence_ids: [E2], relation: COMPATIBLE}
+  gold_summary: CLEAR
+  reason: current and future settlement plans do not overlap
+- case_id: H14
+  domain: finance_policy
+  evidence:
+    - {evidence_id: E1, source_id: source-a, location: reserve, content: "APAC reserve must be 8 percent"}
+    - {evidence_id: E2, source_id: source-b, location: reserve, content: "APAC reserve must be 12 percent"}
+  fact_needs:
+    - {subject: treasury, dimension: reserve_percent, value_type: number}
+  gold_claims:
+    - {subject: treasury, predicate: reserve_percent, value: 8, value_type: number, scope: {region: APAC}, modality: REQUIRED, cardinality: SINGLE, evidence_ids: [E1]}
+    - {subject: treasury, predicate: reserve_percent, value: 12, value_type: number, scope: {region: APAC}, modality: REQUIRED, cardinality: SINGLE, evidence_ids: [E2]}
+  gold_relations:
+    - {left_evidence_ids: [E1], right_evidence_ids: [E2], relation: CONFLICTING}
+  gold_summary: UNRESOLVED
+  reason: same regional requirement has two unequal values
