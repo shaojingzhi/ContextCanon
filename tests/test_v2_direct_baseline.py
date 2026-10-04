@@ -33,8 +33,13 @@ class V2DirectBaselineTests(unittest.TestCase):
         case = self.by_id["A1"]
         prompt = v2_direct_baseline.build_prompt(case)
         self.assertIn("date=2026-03-22", prompt)
+        self.assertIn('"source":"event-record"', prompt)
+        self.assertIn('"location":"date"', prompt)
         self.assertIn('"subject":"Spring Gala"', prompt)
         self.assertIn("Allowed relations", prompt)
+        self.assertIn("DOCUMENTED participates", prompt)
+        self.assertIn("MULTI + MULTI", prompt)
+        self.assertIn("UNKNOWN + anything", prompt)
         self.assertNotIn("gold_claims", prompt)
         self.assertNotIn("gold_summary", prompt)
         self.assertNotIn("same current single-valued event date differs", prompt)

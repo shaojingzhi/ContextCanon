@@ -26,7 +26,12 @@ CONTEXTCANON_RESULT = Path("/tmp/contextcanon_v2_1_36.jsonl")
 
 def build_prompt(case: BenchmarkCase) -> str:
     evidence = [
-        {"ref": item.evidence_id, "content": item.content}
+        {
+            "ref": item.evidence_id,
+            "source": item.source_id,
+            "location": item.location,
+            "content": item.content,
+        }
         for item in case.evidence
     ]
     fact_needs = [
@@ -42,14 +47,20 @@ def build_prompt(case: BenchmarkCase) -> str:
         "Decide governance directly from the supplied Evidence and FactNeeds. "
         "Do not create Claims and do not provide reasoning.\n"
         "Allowed relations: SUPPORTING, COMPATIBLE, CONFLICTING, DIVERGENT, UNKNOWN.\n"
-        "Rules:\n"
-        "- Same semantic fact, same value, and overlapping scope: SUPPORTING.\n"
+        "Frozen V2 rules for the same semantic subject and predicate:\n"
         "- Definitely non-overlapping scope: COMPATIBLE.\n"
-        "- Multi-valued compatible facts that may coexist: COMPATIBLE.\n"
-        "- Same single-valued fact, overlapping scope, and unequal values: CONFLICTING.\n"
-        "- Observed current state versus intended or required state: DIVERGENT.\n"
-        "- Semantic uncertainty: UNKNOWN.\n"
-        "- Do not compare unrelated facts.\n"
+        "- Unknown scope overlap + equal typed value: COMPATIBLE.\n"
+        "- Unknown scope overlap + unequal typed value: UNKNOWN.\n"
+        "- Overlapping scope + equal typed value: SUPPORTING.\n"
+        "- Different values: MULTI + MULTI is COMPATIBLE; UNKNOWN + anything is UNKNOWN; "
+        "SINGLE + MULTI or MULTI + SINGLE is UNKNOWN.\n"
+        "- Overlapping SINGLE + SINGLE unequal values: OBSERVED versus INTENDED or REQUIRED "
+        "is DIVERGENT; if DOCUMENTED participates and its stronger modality cannot be "
+        "established, use UNKNOWN; otherwise use CONFLICTING.\n"
+        "Modality meanings: OBSERVED is actual/runtime/current state; DOCUMENTED is stated "
+        "without clear runtime, requirement, or intent semantics; INTENDED is a planned or "
+        "future target; REQUIRED is a requirement, policy, or must constraint.\n"
+        "Do not compare different unrelated semantic facts.\n"
         "Summary states:\n"
         "- INCOMPLETE: a required FactNeed has no usable evidence or fact.\n"
         "- UNRESOLVED: a relevant CONFLICTING, DIVERGENT, or UNKNOWN relation exists.\n"
