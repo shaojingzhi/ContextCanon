@@ -8,7 +8,9 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 import hashlib
 import json
+import os
 from pathlib import Path
+from time import monotonic
 from typing import Any
 
 if __package__ in {None, ""}:  # Support ``python experiments/v2_ramdocs.py``.
@@ -25,6 +27,7 @@ from contextcanon_v2 import (
     SummaryState,
     govern,
 )
+from contextcanon.semantic import OpenAICompatibleExtractionClient, SemanticInferenceConfig
 
 
 DEFAULT_DATASET = Path("/tmp/RAMDocs_test.jsonl")
@@ -399,11 +402,103 @@ def dataset_summary(cases: Sequence[RamDocsCase]) -> dict[str, Any]:
     }
 
 
+def run_live(
+    cases: Sequence[RamDocsCase],
+    client: Any,
+    *,
+    system: str,
+    model: str,
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    records: list[dict[str, Any]] = []
+    completed_cases: list[RamDocsCase] = []
+    predictions: dict[int, RamDocsPrediction] = {}
+    provider_call_count = 0
+
+    for case in cases:
+        started = monotonic()
+        error: str | None = None
+        prediction: RamDocsPrediction | None = None
+
+        def complete(prompt: str) -> str:
+            nonlocal provider_call_count
+            provider_call_count += 1
+            return client.complete(prompt, model=model).content
+
+        try:
+            if system == "contextcanon":
+                prediction = contextcanon_prediction(case, complete)
+            else:
+                prediction = direct_prediction(case, complete)
+        except Exception as failure:
+            error = f"{type(failure).__name__}: {failure}"
+        latency_ms = round((monotonic() - started) * 1000, 3)
+
+        if prediction is not None:
+            completed_cases.append(case)
+            predictions[case.row_index] = prediction
+        record = {
+            "row_index": case.row_index,
+            "system": system,
+            "predicted_relevant_evidence_refs": (
+                sorted(prediction.relevant_evidence_ids) if prediction else None
+            ),
+            "gold_relevant_evidence_refs": sorted(case.gold_relevant_evidence_ids),
+            "predicted_competing_evidence": (
+                prediction.competing_evidence if prediction else None
+            ),
+            "gold_competing_evidence": case.gold_competing_evidence,
+            "conflict_eval_eligible": case.conflict_eval_eligible,
+            "predicted_summary": prediction.summary_state.value if prediction else None,
+            "gold_summary_proxy": case.gold_summary_proxy.value,
+            "latency_ms": latency_ms,
+            "error": error,
+        }
+        print(json.dumps(record, ensure_ascii=False, sort_keys=True))
+        records.append(record)
+
+    run_counts = {
+        "attempted_case_count": len(cases),
+        "completed_case_count": len(completed_cases),
+        "failed_case_count": len(cases) - len(completed_cases),
+        "provider_call_count": provider_call_count,
+    }
+    aggregate = {
+        "aggregate_metrics": score_predictions(completed_cases, predictions),
+        "scoring_scope": "completed cases only; failures are reported separately",
+        **run_counts,
+    }
+    print(json.dumps(aggregate, ensure_ascii=False, sort_keys=True))
+    return records, aggregate
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--dataset", type=Path, default=DEFAULT_DATASET)
+    parser.add_argument("--run-live", action="store_true")
+    parser.add_argument("--system", choices=("contextcanon", "direct"), default="contextcanon")
+    parser.add_argument("--limit", type=int)
+    parser.add_argument("--model", default="deepseek-v4-pro")
     args = parser.parse_args(argv)
-    print(json.dumps(dataset_summary(load_cases(args.dataset)), sort_keys=True))
+
+    cases = load_cases(args.dataset)
+    if args.limit is not None:
+        if args.limit < 1:
+            parser.error("--limit must be at least 1")
+        cases = cases[:args.limit]
+    if not args.run_live:
+        print(json.dumps(dataset_summary(cases), sort_keys=True))
+        return 0
+
+    api_key = os.environ.get("DEEPSEEK_API_KEY") or os.environ.get("OPENAI_API_KEY")
+    if not api_key:
+        raise SystemExit("Set DEEPSEEK_API_KEY or OPENAI_API_KEY before --run-live.")
+    client = OpenAICompatibleExtractionClient(
+        api_key,
+        base_url=os.environ.get("OPENAI_BASE_URL", "https://api.deepseek.com"),
+        timeout=60,
+        inference=SemanticInferenceConfig(max_output_tokens=1024, thinking=False),
+    )
+    run_live(cases, client, system=args.system, model=args.model)
     return 0
 
 

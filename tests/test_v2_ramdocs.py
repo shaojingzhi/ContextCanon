@@ -5,6 +5,7 @@ import io
 import json
 from pathlib import Path
 import unittest
+from unittest import mock
 
 from contextcanon_v2 import SummaryState
 from experiments import v2_ramdocs
@@ -195,12 +196,91 @@ class V2RamDocsTests(unittest.TestCase):
 
     def test_default_entrypoint_is_offline(self) -> None:
         output = io.StringIO()
-        with redirect_stdout(output):
-            status = v2_ramdocs.main(["--dataset", str(DATASET)])
+        with mock.patch.object(
+            v2_ramdocs,
+            "OpenAICompatibleExtractionClient",
+            side_effect=AssertionError("provider constructed"),
+        ):
+            with redirect_stdout(output):
+                status = v2_ramdocs.main(["--dataset", str(DATASET)])
         payload = json.loads(output.getvalue())
         self.assertEqual(status, 0)
         self.assertFalse(payload["live_execution"])
         self.assertEqual(payload["api_calls"], 0)
+
+    def test_limit_selects_first_stable_rows(self) -> None:
+        output = io.StringIO()
+        with redirect_stdout(output):
+            status = v2_ramdocs.main([
+                "--dataset", str(DATASET), "--limit", "20"
+            ])
+        payload = json.loads(output.getvalue())
+        self.assertEqual(status, 0)
+        self.assertEqual(payload["case_count"], 20)
+        self.assertEqual([case.row_index for case in self.cases[:20]], list(range(20)))
+
+    def test_live_paths_use_exactly_one_completion_per_case(self) -> None:
+        cases = self.cases[:2]
+
+        class Client:
+            def __init__(self) -> None:
+                self.prompts = []
+
+            def complete(self, prompt: str, *, model: str):
+                self.prompts.append((prompt, model))
+                if prompt.startswith("Compile only semantic Claims"):
+                    question = cases[len(self.prompts) - 1].question
+                    content = json.dumps({
+                        "claims": [{
+                            "subject": question,
+                            "predicate": "answer",
+                            "value": "value",
+                            "value_type": "string",
+                            "scope": {},
+                            "modality": "DOCUMENTED",
+                            "cardinality": "UNKNOWN",
+                            "evidence_refs": ["E1"],
+                        }]
+                    })
+                else:
+                    content = json.dumps({
+                        "relevant_evidence_refs": ["E1"],
+                        "competing_evidence": False,
+                        "summary_state": "CLEAR",
+                    })
+                return mock.Mock(content=content)
+
+        for system in ("contextcanon", "direct"):
+            client = Client()
+            with redirect_stdout(io.StringIO()):
+                records, aggregate = v2_ramdocs.run_live(
+                    cases, client, system=system, model="test-model"
+                )
+            self.assertEqual(len(client.prompts), 2)
+            self.assertEqual(len(records), 2)
+            self.assertEqual(aggregate["provider_call_count"], 2)
+            self.assertEqual(aggregate["completed_case_count"], 2)
+            self.assertEqual(aggregate["failed_case_count"], 0)
+
+    def test_failed_completion_is_not_retried(self) -> None:
+        class FailingClient:
+            def __init__(self) -> None:
+                self.calls = 0
+
+            def complete(self, prompt: str, *, model: str):
+                self.calls += 1
+                raise TimeoutError("offline test timeout")
+
+        client = FailingClient()
+        with redirect_stdout(io.StringIO()):
+            records, aggregate = v2_ramdocs.run_live(
+                self.cases[:1], client, system="contextcanon", model="test-model"
+            )
+        self.assertEqual(client.calls, 1)
+        self.assertEqual(aggregate["provider_call_count"], 1)
+        self.assertEqual(aggregate["completed_case_count"], 0)
+        self.assertEqual(aggregate["failed_case_count"], 1)
+        self.assertIn("SemanticCompilationError", records[0]["error"])
 
 
 if __name__ == "__main__":
