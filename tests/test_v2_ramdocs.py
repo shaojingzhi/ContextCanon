@@ -261,6 +261,7 @@ class V2RamDocsTests(unittest.TestCase):
             self.assertEqual(aggregate["provider_call_count"], 2)
             self.assertEqual(aggregate["completed_case_count"], 2)
             self.assertEqual(aggregate["failed_case_count"], 0)
+            self.assertEqual(aggregate["completion_rate"]["rate"], 1.0)
 
     def test_failed_completion_is_not_retried(self) -> None:
         class FailingClient:
@@ -280,7 +281,58 @@ class V2RamDocsTests(unittest.TestCase):
         self.assertEqual(aggregate["provider_call_count"], 1)
         self.assertEqual(aggregate["completed_case_count"], 0)
         self.assertEqual(aggregate["failed_case_count"], 1)
+        self.assertEqual(aggregate["completion_rate"]["rate"], 0.0)
         self.assertIn("SemanticCompilationError", records[0]["error"])
+
+    def test_failed_case_counts_against_end_to_end_denominators(self) -> None:
+        cases = self.cases[:2]
+        self.assertTrue(all(case.conflict_eval_eligible for case in cases))
+
+        class PartiallyFailingClient:
+            def __init__(self) -> None:
+                self.calls = 0
+
+            def complete(self, prompt: str, *, model: str):
+                self.calls += 1
+                if self.calls == 2:
+                    raise TimeoutError("offline test timeout")
+                case = cases[0]
+                return mock.Mock(content=json.dumps({
+                    "relevant_evidence_refs": sorted(case.gold_relevant_evidence_ids),
+                    "competing_evidence": case.gold_competing_evidence,
+                    "summary_state": case.gold_summary_proxy.value,
+                }))
+
+        client = PartiallyFailingClient()
+        with redirect_stdout(io.StringIO()):
+            records, aggregate = v2_ramdocs.run_live(
+                cases, client, system="direct", model="test-model"
+            )
+
+        self.assertEqual(client.calls, 2)
+        self.assertEqual(aggregate["provider_call_count"], 2)
+        self.assertEqual(aggregate["attempted_case_count"], 2)
+        self.assertEqual(aggregate["completed_case_count"], 1)
+        self.assertEqual(aggregate["failed_case_count"], 1)
+        self.assertEqual(aggregate["completion_rate"]["rate"], 0.5)
+        self.assertEqual(aggregate["completed_only_metrics"]["case_count"], 1)
+        self.assertEqual(
+            aggregate["completed_only_metrics"]["evidence_relevance"]
+            ["relevant_recall"]["rate"],
+            1.0,
+        )
+        end_to_end = aggregate["end_to_end_metrics"]
+        self.assertEqual(
+            end_to_end["competing_evidence_eligible_accuracy"],
+            {"count": 1, "total": 2, "rate": 0.5},
+        )
+        self.assertEqual(
+            end_to_end["summary_proxy_all_attempted_accuracy"]["rate"], 0.5
+        )
+        self.assertEqual(
+            end_to_end["summary_proxy_eligible_attempted_accuracy"]["rate"], 0.5
+        )
+        self.assertIsNotNone(records[1]["error"])
 
 
 if __name__ == "__main__":

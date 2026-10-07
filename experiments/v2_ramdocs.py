@@ -462,9 +462,41 @@ def run_live(
         "failed_case_count": len(cases) - len(completed_cases),
         "provider_call_count": provider_call_count,
     }
+    eligible_attempted = [case for case in cases if case.conflict_eval_eligible]
+    competing_correct = sum(
+        case.row_index in predictions
+        and predictions[case.row_index].competing_evidence == case.gold_competing_evidence
+        for case in eligible_attempted
+    )
+    summary_correct = sum(
+        case.row_index in predictions
+        and predictions[case.row_index].summary_state == case.gold_summary_proxy
+        for case in cases
+    )
+    eligible_summary_correct = sum(
+        case.row_index in predictions
+        and predictions[case.row_index].summary_state == case.gold_summary_proxy
+        for case in eligible_attempted
+    )
     aggregate = {
-        "aggregate_metrics": score_predictions(completed_cases, predictions),
-        "scoring_scope": "completed cases only; failures are reported separately",
+        "completed_only_metrics": score_predictions(completed_cases, predictions),
+        "end_to_end_metrics": {
+            "competing_evidence_eligible_accuracy": _metric(
+                competing_correct, len(eligible_attempted)
+            ),
+            "summary_proxy_all_attempted_accuracy": _metric(
+                summary_correct, len(cases)
+            ),
+            "summary_proxy_eligible_attempted_accuracy": _metric(
+                eligible_summary_correct, len(eligible_attempted)
+            ),
+            "note": (
+                "Case-level end-to-end metrics include all attempted cases; provider "
+                "and schema failures count as incorrect. Document-level relevance "
+                "metrics remain completed-only and do not fabricate failed predictions."
+            ),
+        },
+        "completion_rate": _metric(len(completed_cases), len(cases)),
         **run_counts,
     }
     print(json.dumps(aggregate, ensure_ascii=False, sort_keys=True))
