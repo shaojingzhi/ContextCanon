@@ -39,6 +39,7 @@ class V2RamDocsTests(unittest.TestCase):
             summary["summary_proxy_counts"],
             {"CLEAR": 256, "UNRESOLVED": 241, "INCOMPLETE": 3},
         )
+        self.assertEqual(summary["conflict_eval_eligible_count"], 100)
 
     def test_evidence_and_fact_need_are_mechanical(self) -> None:
         case = self.cases[0]
@@ -118,12 +119,61 @@ class V2RamDocsTests(unittest.TestCase):
         }
         metrics = v2_ramdocs.score_predictions(self.cases, predictions)
         relevance = metrics["evidence_relevance"]
-        self.assertTrue(all(value["rate"] == 1.0 for value in relevance.values()))
+        self.assertEqual(relevance["case_count"], 500)
+        self.assertTrue(all(
+            relevance[name]["rate"] == 1.0
+            for name in (
+                "relevant_precision",
+                "relevant_recall",
+                "correct_recall",
+                "misinfo_retention_rate",
+                "noise_rejection_rate",
+            )
+        ))
+        self.assertEqual(metrics["competing_evidence"]["eligible_case_count"], 100)
         self.assertEqual(metrics["competing_evidence"]["f1"], 1.0)
-        self.assertEqual(metrics["summary_proxy"]["accuracy"]["rate"], 1.0)
+        all_summary = metrics["summary_proxy"]["all_cases_exploratory"]
+        eligible_summary = metrics["summary_proxy"]["eligible_subset"]
+        self.assertEqual(all_summary["accuracy"]["rate"], 1.0)
+        self.assertEqual(eligible_summary["accuracy"]["rate"], 1.0)
         self.assertEqual(
-            metrics["summary_proxy"]["per_class_counts"]["INCOMPLETE"]["gold"],
+            all_summary["per_class_counts"]["INCOMPLETE"]["gold"],
             3,
+        )
+        self.assertEqual(
+            eligible_summary["per_class_counts"],
+            {
+                "CLEAR": {"gold": 43, "predicted": 43, "correct": 43},
+                "UNRESOLVED": {"gold": 54, "predicted": 54, "correct": 54},
+                "INCOMPLETE": {"gold": 3, "predicted": 3, "correct": 3},
+            },
+        )
+
+    def test_ineligible_entity_ambiguity_does_not_affect_conflict_metrics(self) -> None:
+        predictions = {
+            case.row_index: v2_ramdocs.RamDocsPrediction(
+                relevant_evidence_ids=case.gold_relevant_evidence_ids,
+                competing_evidence=(
+                    case.gold_competing_evidence
+                    if case.conflict_eval_eligible else not case.gold_competing_evidence
+                ),
+                summary_state=(
+                    case.gold_summary_proxy
+                    if case.conflict_eval_eligible else SummaryState.INCOMPLETE
+                ),
+            )
+            for case in self.cases
+        }
+        metrics = v2_ramdocs.score_predictions(self.cases, predictions)
+        self.assertEqual(metrics["competing_evidence"]["eligible_case_count"], 100)
+        self.assertEqual(metrics["competing_evidence"]["accuracy"]["rate"], 1.0)
+        self.assertEqual(
+            metrics["summary_proxy"]["eligible_subset"]["accuracy"]["rate"],
+            1.0,
+        )
+        self.assertLess(
+            metrics["summary_proxy"]["all_cases_exploratory"]["accuracy"]["rate"],
+            1.0,
         )
 
     def test_empty_predictions_do_not_report_undefined_precision_as_perfect(self) -> None:

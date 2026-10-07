@@ -17,6 +17,7 @@ if __package__ in {None, ""}:  # Support ``python experiments/v2_ramdocs.py``.
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from contextcanon_v2 import (
+    Claim,
     Evidence,
     FactNeed,
     Relation,
@@ -34,6 +35,10 @@ DOCUMENT_TYPES = {"correct", "misinfo", "noise"}
 SUMMARY_VALUES = {state.value for state in SummaryState}
 
 
+def _canonical(value: str) -> str:
+    return " ".join(value.strip().casefold().split())
+
+
 @dataclass(frozen=True, slots=True)
 class RamDocsCase:
     row_index: int
@@ -45,6 +50,7 @@ class RamDocsCase:
     gold_misinfo_evidence_ids: frozenset[str]
     gold_competing_evidence: bool
     gold_summary_proxy: SummaryState
+    conflict_eval_eligible: bool
 
 
 @dataclass(frozen=True, slots=True)
@@ -61,7 +67,14 @@ def _case_from_row(row_index: int, row: dict[str, Any]) -> RamDocsCase:
         raise ValueError(f"RAMDocs row {row_index} has unexpected fields")
     question = row["question"]
     documents = row["documents"]
-    if not isinstance(question, str) or not question.strip() or not isinstance(documents, list):
+    gold_answers = row["gold_answers"]
+    if (
+        not isinstance(question, str)
+        or not question.strip()
+        or not isinstance(documents, list)
+        or not isinstance(gold_answers, list)
+        or any(not isinstance(answer, str) for answer in gold_answers)
+    ):
         raise ValueError(f"RAMDocs row {row_index} is malformed")
 
     evidence: list[Evidence] = []
@@ -103,6 +116,7 @@ def _case_from_row(row_index: int, row: dict[str, Any]) -> RamDocsCase:
         gold_misinfo_evidence_ids=frozenset(misinfo),
         gold_competing_evidence=bool(correct and misinfo),
         gold_summary_proxy=summary,
+        conflict_eval_eligible=len(set(gold_answers)) == 1,
     )
 
 
@@ -127,23 +141,40 @@ def contextcanon_prediction(
     """Make one semantic completion and derive RAMDocs targets from its provenance."""
     claims = SemanticCompiler(complete).compile(case.evidence, case.fact_needs)
     result = govern(claims, case.fact_needs)
+    relevant_claims = tuple(
+        claim for claim in result.claims
+        if any(_claim_matches_need(claim, need) for need in case.fact_needs)
+    )
     relevant_ids = frozenset(
         evidence_id
-        for claim in result.claims
+        for claim in relevant_claims
         for evidence_id in claim.evidence_ids
     )
     distinct_values = {
         json.dumps(claim.value, ensure_ascii=False, sort_keys=True, default=str)
-        for claim in result.claims
+        for claim in relevant_claims
     }
     unresolved = any(
         record.relation in {Relation.CONFLICTING, Relation.DIVERGENT, Relation.UNKNOWN}
+        and record.left_claim in relevant_claims
+        and record.right_claim in relevant_claims
         for record in result.relations
     )
     return RamDocsPrediction(
         relevant_evidence_ids=relevant_ids,
         competing_evidence=len(distinct_values) > 1 or unresolved,
         summary_state=result.summary_state,
+    )
+
+
+def _claim_matches_need(claim: Claim, need: FactNeed) -> bool:
+    return (
+        _canonical(claim.subject) == _canonical(need.subject)
+        and _canonical(claim.predicate) == _canonical(need.dimension)
+        and (
+            need.value_type is None
+            or _canonical(claim.value_type) == _canonical(need.value_type)
+        )
     )
 
 
@@ -227,11 +258,16 @@ def score_predictions(
     misinfo_retained = misinfo_total = 0
     noise_rejected = noise_total = 0
     competing_tp = competing_fp = competing_fn = competing_tn = 0
-    summary_correct = 0
-    summary_counts = {
+    all_summary_correct = eligible_summary_correct = 0
+    all_summary_counts = {
         state.value: {"gold": 0, "predicted": 0, "correct": 0}
         for state in SummaryState
     }
+    eligible_summary_counts = {
+        state.value: {"gold": 0, "predicted": 0, "correct": 0}
+        for state in SummaryState
+    }
+    eligible_count = 0
 
     for case in cases:
         prediction = predictions[case.row_index]
@@ -251,6 +287,17 @@ def score_predictions(
         noise_rejected += len(noise - predicted)
         noise_total += len(noise)
 
+        gold_summary = case.gold_summary_proxy.value
+        predicted_summary = prediction.summary_state.value
+        all_summary_counts[gold_summary]["gold"] += 1
+        all_summary_counts[predicted_summary]["predicted"] += 1
+        if predicted_summary == gold_summary:
+            all_summary_correct += 1
+            all_summary_counts[gold_summary]["correct"] += 1
+
+        if not case.conflict_eval_eligible:
+            continue
+        eligible_count += 1
         if case.gold_competing_evidence and prediction.competing_evidence:
             competing_tp += 1
         elif not case.gold_competing_evidence and prediction.competing_evidence:
@@ -259,14 +306,11 @@ def score_predictions(
             competing_fn += 1
         else:
             competing_tn += 1
-
-        gold_summary = case.gold_summary_proxy.value
-        predicted_summary = prediction.summary_state.value
-        summary_counts[gold_summary]["gold"] += 1
-        summary_counts[predicted_summary]["predicted"] += 1
+        eligible_summary_counts[gold_summary]["gold"] += 1
+        eligible_summary_counts[predicted_summary]["predicted"] += 1
         if predicted_summary == gold_summary:
-            summary_correct += 1
-            summary_counts[gold_summary]["correct"] += 1
+            eligible_summary_correct += 1
+            eligible_summary_counts[gold_summary]["correct"] += 1
 
     precision_denominator = relevant_tp + relevant_fp
     recall_denominator = relevant_tp + relevant_fn
@@ -287,6 +331,7 @@ def score_predictions(
     return {
         "case_count": len(cases),
         "evidence_relevance": {
+            "case_count": len(cases),
             "relevant_precision": _metric(relevant_tp, precision_denominator),
             "relevant_recall": _metric(relevant_tp, recall_denominator),
             "correct_recall": _metric(correct_retained, correct_total),
@@ -294,7 +339,8 @@ def score_predictions(
             "noise_rejection_rate": _metric(noise_rejected, noise_total),
         },
         "competing_evidence": {
-            "accuracy": _metric(competing_tp + competing_tn, len(cases)),
+            "eligible_case_count": eligible_count,
+            "accuracy": _metric(competing_tp + competing_tn, eligible_count),
             "precision": _metric(competing_tp, competing_precision_denominator),
             "recall": _metric(competing_tp, competing_recall_denominator),
             "f1": competing_f1,
@@ -306,12 +352,21 @@ def score_predictions(
             },
         },
         "summary_proxy": {
-            "accuracy": _metric(summary_correct, len(cases)),
-            "per_class_counts": summary_counts,
             "note": (
-                "RAMDocs dataset-derived proxy only; INCOMPLETE has three Gold cases and "
-                "is not a robust estimate of INCOMPLETE detection."
+                "RAMDocs dataset-derived proxies only, not full V2 semantic Gold; "
+                "INCOMPLETE has three Gold cases and is not a robust estimate of "
+                "INCOMPLETE detection."
             ),
+            "all_cases_exploratory": {
+                "case_count": len(cases),
+                "accuracy": _metric(all_summary_correct, len(cases)),
+                "per_class_counts": all_summary_counts,
+            },
+            "eligible_subset": {
+                "case_count": eligible_count,
+                "accuracy": _metric(eligible_summary_correct, eligible_count),
+                "per_class_counts": eligible_summary_counts,
+            },
         },
     }
 
@@ -336,6 +391,9 @@ def dataset_summary(cases: Sequence[RamDocsCase]) -> dict[str, Any]:
         "document_type_counts": dict(type_counts),
         "combination_counts": dict(combination_counts),
         "summary_proxy_counts": dict(summaries),
+        "conflict_eval_eligible_count": sum(
+            case.conflict_eval_eligible for case in cases
+        ),
         "live_execution": False,
         "api_calls": 0,
     }
