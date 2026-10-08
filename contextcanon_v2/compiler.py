@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import date
 from math import isfinite
 import json
+import re
 from collections.abc import Callable, Sequence
 from decimal import Decimal, InvalidOperation
 from typing import Any
@@ -28,6 +29,18 @@ _CLAIM_FIELDS = {
 }
 _VALUE_TYPES = {"string", "enum", "boolean", "number", "date"}
 _UNKNOWN_SCOPE_VALUES = {"unknown", "?"}
+_GROUPED_INTEGER = re.compile(r"[+-]?\d{1,3}(?:,\d{3})+")
+_ENGLISH_MONTHS = {
+    name: number
+    for number, month in enumerate(
+        (
+            "january", "february", "march", "april", "may", "june",
+            "july", "august", "september", "october", "november", "december",
+        ),
+        start=1,
+    )
+    for name in (month, month[:3])
+}
 
 
 def _canonical(value: str) -> str:
@@ -40,6 +53,21 @@ def _json_value(value: Any, *, field: str) -> Any:
     if isinstance(value, float) and isfinite(value):
         return value
     raise SemanticCompilationError(f"{field} must be a JSON scalar")
+
+
+def _normalize_english_date(value: str) -> str | None:
+    day_first = re.fullmatch(r"(\d{1,2}) ([A-Za-z]+\.?) (\d{4})", value)
+    month_first = re.fullmatch(r"([A-Za-z]+\.?) (\d{1,2}), (\d{4})", value)
+    if day_first:
+        day_text, month_text, year_text = day_first.groups()
+    elif month_first:
+        month_text, day_text, year_text = month_first.groups()
+    else:
+        return None
+    month = _ENGLISH_MONTHS.get(month_text.removesuffix(".").casefold())
+    if month is None:
+        return None
+    return date(int(year_text), month, int(day_text)).isoformat()
 
 
 def _normalize_value(value: Any, value_type: str) -> Any:
@@ -59,8 +87,11 @@ def _normalize_value(value: Any, value_type: str) -> Any:
                 raise SemanticCompilationError("number value must be finite")
             return value
         if isinstance(value, str):
+            normalized = value.strip()
+            if _GROUPED_INTEGER.fullmatch(normalized):
+                normalized = normalized.replace(",", "")
             try:
-                parsed = Decimal(value.strip())
+                parsed = Decimal(normalized)
             except (InvalidOperation, ValueError):
                 raise SemanticCompilationError("number value is not numeric") from None
             if not parsed.is_finite():
@@ -70,9 +101,16 @@ def _normalize_value(value: Any, value_type: str) -> Any:
     if value_type == "date":
         if not isinstance(value, str):
             raise SemanticCompilationError("date value must be an ISO date string")
+        normalized = value.strip()
         try:
-            return date.fromisoformat(value.strip()).isoformat()
+            return date.fromisoformat(normalized).isoformat()
         except ValueError:
+            try:
+                english_date = _normalize_english_date(normalized)
+            except ValueError:
+                english_date = None
+            if english_date is not None:
+                return english_date
             raise SemanticCompilationError("date value must be an ISO date string") from None
     raise SemanticCompilationError(f"unsupported value_type: {value_type}")
 
@@ -144,6 +182,7 @@ def _prompt(evidence: Sequence[Evidence], needs: Sequence[FactNeed]) -> str:
             "Compile only semantic Claims relevant to the supplied FactNeeds.",
             "For every emitted Claim, subject MUST exactly equal the canonical subject from one supplied FactNeed, and predicate MUST exactly equal the dimension from that same FactNeed.",
             "Evidence wording may use aliases or paraphrases, but normalize them onto those supplied FactNeed labels; do not invent facts.",
+            'Use value_type="date" only for an exact calendar date with day, English month, and four-digit year, emitting ISO YYYY-MM-DD when possible; for partial, ranged, approximate, or relative temporal expressions such as 1856, January 1862, 1926-27, about 1870, or early 1970s, use value_type="string" and preserve the supported expression without inventing month, day, or other temporal precision.',
             "scope contains qualifiers that restrict where or when a Claim applies; preserve every qualifier explicitly stated by its supporting evidence, compiling each Claim independently.",
             "Map explicit current, currently, or now to scope.time=current; future, later, or planned future to scope.time=future; production to scope.environment=production; staging to scope.environment=staging; and explicit EU or US regions to scope.region with that region.",
             "If no relevant qualifier is stated, scope may be {}; do not invent qualifiers or drop an explicit scope because another source disagrees.",

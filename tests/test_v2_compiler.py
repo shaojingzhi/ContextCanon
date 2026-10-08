@@ -218,6 +218,104 @@ class V2CompilerTests(unittest.TestCase):
         with self.assertRaises(SemanticCompilationError):
             bad_scope.compile([_evidence("e1", "JWT")], (FactNeed("auth", "protocol"),))
 
+    def test_grouped_integer_values_are_normalized(self) -> None:
+        evidence = [_evidence("number", "population")]
+        need = (FactNeed("place", "population", value_type="number"),)
+        for raw, expected in (("3,559", 3559), ("-12,345", -12345)):
+            with self.subTest(raw=raw):
+                compiler = SemanticCompiler(
+                    lambda _prompt, raw=raw: _response(
+                        _claim(
+                            subject="place",
+                            predicate="population",
+                            value=raw,
+                            value_type="number",
+                            scope={},
+                        )
+                    )
+                )
+                self.assertEqual(compiler.compile(evidence, need)[0].value, expected)
+
+    def test_non_grouped_numeric_decorations_remain_invalid(self) -> None:
+        evidence = [_evidence("number", "population")]
+        need = (FactNeed("place", "population", value_type="number"),)
+        for raw in ("12,34", "3,559 people", "35%", "3-5"):
+            with self.subTest(raw=raw):
+                compiler = SemanticCompiler(
+                    lambda _prompt, raw=raw: _response(
+                        _claim(
+                            subject="place",
+                            predicate="population",
+                            value=raw,
+                            value_type="number",
+                            scope={},
+                        )
+                    )
+                )
+                with self.assertRaises(SemanticCompilationError):
+                    compiler.compile(evidence, need)
+
+    def test_exact_english_full_dates_are_normalized(self) -> None:
+        evidence = [_evidence("date", "event date")]
+        need = (FactNeed("event", "date", value_type="date"),)
+        examples = (
+            ("1 December 1737", "1737-12-01"),
+            ("December 8, 1987", "1987-12-08"),
+            ("11 Nov. 1808", "1808-11-11"),
+        )
+        for raw, expected in examples:
+            with self.subTest(raw=raw):
+                compiler = SemanticCompiler(
+                    lambda _prompt, raw=raw: _response(
+                        _claim(
+                            subject="event",
+                            predicate="date",
+                            value=raw,
+                            value_type="date",
+                            scope={},
+                        )
+                    )
+                )
+                self.assertEqual(compiler.compile(evidence, need)[0].value, expected)
+
+    def test_imprecise_or_impossible_dates_remain_invalid(self) -> None:
+        evidence = [_evidence("date", "event date")]
+        need = (FactNeed("event", "date", value_type="date"),)
+        for raw in (
+            "31 February 2024",
+            "1856",
+            "January 1862",
+            "1926-27",
+            "about 1870",
+        ):
+            with self.subTest(raw=raw):
+                compiler = SemanticCompiler(
+                    lambda _prompt, raw=raw: _response(
+                        _claim(
+                            subject="event",
+                            predicate="date",
+                            value=raw,
+                            value_type="date",
+                            scope={},
+                        )
+                    )
+                )
+                with self.assertRaises(SemanticCompilationError):
+                    compiler.compile(evidence, need)
+
+    def test_prompt_preserves_partial_temporal_precision_as_string(self) -> None:
+        prompts: list[str] = []
+        compiler = SemanticCompiler(lambda prompt: prompts.append(prompt) or _response())
+        compiler.compile(
+            [_evidence("date", "established in 1856")],
+            (FactNeed("event", "date"),),
+        )
+        prompt = prompts[0]
+        self.assertIn('Use value_type="date" only for an exact calendar date', prompt)
+        self.assertIn('use value_type="string"', prompt)
+        self.assertIn("partial, ranged, approximate, or relative", prompt)
+        self.assertIn("without inventing month, day, or other temporal precision", prompt)
+
     def test_compilation_failure_can_feed_governance_incomplete(self) -> None:
         compiler = SemanticCompiler(lambda _prompt: "{}")
         needs = (FactNeed("auth", "protocol"),)
