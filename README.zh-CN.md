@@ -67,6 +67,9 @@ V2.2 在现有严格 Claim 校验之前加入了少量通用规范化逻辑。�
 
 **这是一项基于已用于分析 V2.2 的数据集失败轨迹所做的工程回归，不是未经接触的外部验证。**
 
+完整的真实实验清单、500 条 RAMDocs 结果、Direct 对照、失败口径和 Agent 延迟分解见
+[`docs/EXPERIMENT_REPORT.zh-CN.md`](docs/EXPERIMENT_REPORT.zh-CN.md)。
+
 ## 与 Guardrail 系统的关注范围
 
 以下是架构关注点的比较，不是基准测试，也不表示某个系统优于另一个系统。

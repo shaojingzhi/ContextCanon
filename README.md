@@ -98,6 +98,10 @@ to 0. Governance, Gold mappings, and scoring stayed unchanged.
 **This is an engineering regression on a dataset whose failure traces informed
 V2.2, not untouched external validation.**
 
+The consolidated [Chinese experiment report](docs/EXPERIMENT_REPORT.zh-CN.md)
+records the complete live-run inventory, the 500-case RAMDocs results, Direct
+comparison, failure accounting, and agent latency breakdown.
+
 ## Scope relative to guardrail systems
 
 This is an architectural comparison, not a benchmark or superiority claim.
