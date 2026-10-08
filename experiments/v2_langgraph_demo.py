@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Callable, Sequence
+from collections.abc import Awaitable, Callable, Sequence
 from itertools import count
 from typing import Any, TypedDict
 
@@ -31,12 +31,16 @@ STATIC_POLICY = Evidence(
     content="production release channel must be stable",
 )
 TOOL_PLAN = ("read_policy", "read_runtime_state", "deploy_release")
+ToolSelector = Callable[
+    ["DemoState"], Awaitable[tuple[str | None, dict[str, Any]]]
+]
 
 
 class DemoState(TypedDict):
     attempted_tools: list[str]
     tool_results: list[Any]
     next_tool: str | None
+    next_arguments: dict[str, Any]
     blocked: bool
     governance_summary_state: str | None
 
@@ -44,9 +48,15 @@ class DemoState(TypedDict):
 class ScriptedModel:
     """Offline stand-in that lets LangGraph own deterministic tool selection."""
 
-    def choose_tool(self, state: DemoState) -> str | None:
+    async def choose_tool(
+        self, state: DemoState
+    ) -> tuple[str | None, dict[str, Any]]:
         position = len(state["attempted_tools"])
-        return TOOL_PLAN[position] if position < len(TOOL_PLAN) else None
+        if position >= len(TOOL_PLAN):
+            return None, {}
+        name = TOOL_PLAN[position]
+        arguments = {"channel": "stable"} if name == "deploy_release" else {}
+        return name, arguments
 
 
 class ReleaseBackend:
@@ -71,6 +81,7 @@ def initial_state() -> DemoState:
         "attempted_tools": [],
         "tool_results": [],
         "next_tool": None,
+        "next_arguments": {},
         "blocked": False,
         "governance_summary_state": None,
     }
@@ -81,6 +92,7 @@ def build_demo(
     *,
     runtime_channel: str = "canary",
     initial_evidence: Sequence[Evidence] = (STATIC_POLICY,),
+    select_tool: ToolSelector | None = None,
 ) -> tuple[Any, GovernedToolProxy, ReleaseBackend]:
     """Build a LangGraph loop whose tool node delegates to GovernedToolProxy."""
     backend = ReleaseBackend(runtime_channel)
@@ -111,19 +123,19 @@ def build_demo(
         initial_evidence=initial_evidence,
         result_to_evidence=result_to_evidence,
     )
-    model = ScriptedModel()
+    choose_tool = select_tool or ScriptedModel().choose_tool
 
     async def agent_node(state: DemoState) -> dict[str, Any]:
-        return {"next_tool": model.choose_tool(state)}
+        name, arguments = await choose_tool(state)
+        return {"next_tool": name, "next_arguments": arguments}
 
     async def tool_node(state: DemoState) -> dict[str, Any]:
         name = state["next_tool"]
         if name is None:
             return {}
         attempted = [*state["attempted_tools"], name]
-        arguments = {"channel": "stable"} if name == "deploy_release" else {}
         try:
-            result = await proxy.call_tool(name, arguments)
+            result = await proxy.call_tool(name, state["next_arguments"])
         except ToolGovernanceBlocked as error:
             return {
                 "attempted_tools": attempted,

@@ -3,6 +3,7 @@ from __future__ import annotations
 import importlib.util
 import json
 from pathlib import Path
+from types import SimpleNamespace
 import unittest
 
 from contextcanon_v2 import SummaryState
@@ -86,3 +87,57 @@ class LangGraphDemoTests(unittest.IsolatedAsyncioTestCase):
         ).read_text()
         self.assertNotIn("from agents", text)
         self.assertNotIn("experiments.agentabstain", text)
+
+    @unittest.skipUnless(LANGGRAPH_AVAILABLE, "install the langgraph-demo extra")
+    async def test_live_path_uses_real_model_choices_without_retry(self) -> None:
+        from experiments.v2_langgraph_live import run_live
+
+        responses = iter(
+            [
+                '{"tool":"read_policy","arguments":{}}',
+                '{"tool":"read_runtime_state","arguments":{}}',
+                '{"tool":"deploy_release","arguments":{"channel":"stable"}}',
+                json.dumps(
+                    {
+                        "claims": [
+                            _claim("stable", "E1", "REQUIRED"),
+                            _claim("canary", "E3", "OBSERVED"),
+                        ]
+                    }
+                ),
+            ]
+        )
+
+        class Client:
+            def complete(self, _prompt: str, *, model: str):
+                return SimpleNamespace(
+                    content=next(responses), usage=None, model=model
+                )
+
+        record = await run_live(Client(), "test-model")
+
+        self.assertEqual(record["provider_call_count"], 4)
+        self.assertEqual(record["agent_model_call_count"], 3)
+        self.assertEqual(record["evidence_count"], 3)
+        self.assertEqual(record["governance_summary_state"], "UNRESOLVED")
+        self.assertTrue(record["blocked"])
+        self.assertFalse(record["side_effect_dispatched"])
+        self.assertIsNone(record["error"])
+
+    @unittest.skipUnless(LANGGRAPH_AVAILABLE, "install the langgraph-demo extra")
+    async def test_invalid_live_choice_fails_without_retry(self) -> None:
+        from experiments.v2_langgraph_live import run_live
+
+        class Client:
+            calls = 0
+
+            def complete(self, _prompt: str, *, model: str):
+                self.calls += 1
+                return SimpleNamespace(content="not json", usage=None, model=model)
+
+        client = Client()
+        record = await run_live(client, "test-model")
+
+        self.assertEqual(client.calls, 1)
+        self.assertEqual(record["provider_call_count"], 1)
+        self.assertIn("JSONDecodeError", record["error"])
