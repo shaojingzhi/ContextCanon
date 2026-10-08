@@ -418,11 +418,13 @@ def run_live(
         started = monotonic()
         error: str | None = None
         prediction: RamDocsPrediction | None = None
+        raw_model_response: str | None = None
 
         def complete(prompt: str) -> str:
-            nonlocal provider_call_count
+            nonlocal provider_call_count, raw_model_response
             provider_call_count += 1
-            return client.complete(prompt, model=model).content
+            raw_model_response = client.complete(prompt, model=model).content
+            return raw_model_response
 
         try:
             if system == "contextcanon":
@@ -452,6 +454,7 @@ def run_live(
             "gold_summary_proxy": case.gold_summary_proxy.value,
             "latency_ms": latency_ms,
             "error": error,
+            "raw_model_response": raw_model_response,
         }
         print(json.dumps(record, ensure_ascii=False, sort_keys=True))
         records.append(record)
@@ -509,14 +512,28 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--run-live", action="store_true")
     parser.add_argument("--system", choices=("contextcanon", "direct"), default="contextcanon")
     parser.add_argument("--limit", type=int)
+    parser.add_argument("--rows")
     parser.add_argument("--model", default="deepseek-v4-pro")
     args = parser.parse_args(argv)
 
     cases = load_cases(args.dataset)
+    if args.limit is not None and args.rows is not None:
+        parser.error("--limit and --rows cannot be used together")
     if args.limit is not None:
         if args.limit < 1:
             parser.error("--limit must be at least 1")
         cases = cases[:args.limit]
+    elif args.rows is not None:
+        try:
+            row_indices = [int(value) for value in args.rows.split(",")]
+        except ValueError:
+            parser.error("--rows must be a comma-separated list of row indices")
+        if not row_indices or len(set(row_indices)) != len(row_indices):
+            parser.error("--rows must contain unique row indices")
+        by_index = {case.row_index: case for case in cases}
+        if any(index not in by_index for index in row_indices):
+            parser.error("--rows contains an unknown row index")
+        cases = tuple(by_index[index] for index in row_indices)
     if not args.run_live:
         print(json.dumps(dataset_summary(cases), sort_keys=True))
         return 0

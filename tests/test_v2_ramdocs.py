@@ -219,6 +219,21 @@ class V2RamDocsTests(unittest.TestCase):
         self.assertEqual(payload["case_count"], 20)
         self.assertEqual([case.row_index for case in self.cases[:20]], list(range(20)))
 
+    def test_rows_selects_exact_indices_in_requested_order(self) -> None:
+        selected = []
+
+        def summarize(cases):
+            selected.extend(case.row_index for case in cases)
+            return {"case_count": len(cases), "live_execution": False, "api_calls": 0}
+
+        with mock.patch.object(v2_ramdocs, "dataset_summary", side_effect=summarize):
+            with redirect_stdout(io.StringIO()):
+                status = v2_ramdocs.main([
+                    "--dataset", str(DATASET), "--rows", "4,6,127"
+                ])
+        self.assertEqual(status, 0)
+        self.assertEqual(selected, [4, 6, 127])
+
     def test_live_paths_use_exactly_one_completion_per_case(self) -> None:
         cases = self.cases[:2]
 
@@ -262,6 +277,40 @@ class V2RamDocsTests(unittest.TestCase):
             self.assertEqual(aggregate["completed_case_count"], 2)
             self.assertEqual(aggregate["failed_case_count"], 0)
             self.assertEqual(aggregate["completion_rate"]["rate"], 1.0)
+            self.assertIsInstance(records[0]["raw_model_response"], str)
+
+    def test_compiler_failure_records_raw_response_without_retry(self) -> None:
+        raw_response = json.dumps({
+            "claims": [{
+                "subject": self.cases[0].question,
+                "predicate": "answer",
+                "value": "not-a-number",
+                "value_type": "number",
+                "scope": {},
+                "modality": "DOCUMENTED",
+                "cardinality": "UNKNOWN",
+                "evidence_refs": ["E1"],
+            }]
+        })
+
+        class Client:
+            def __init__(self) -> None:
+                self.calls = 0
+
+            def complete(self, prompt: str, *, model: str):
+                self.calls += 1
+                return mock.Mock(content=raw_response)
+
+        client = Client()
+        with redirect_stdout(io.StringIO()):
+            records, aggregate = v2_ramdocs.run_live(
+                self.cases[:1], client, system="contextcanon", model="test-model"
+            )
+        self.assertEqual(client.calls, 1)
+        self.assertEqual(aggregate["provider_call_count"], 1)
+        self.assertEqual(aggregate["failed_case_count"], 1)
+        self.assertEqual(records[0]["raw_model_response"], raw_response)
+        self.assertIn("number value is not numeric", records[0]["error"])
 
     def test_failed_completion_is_not_retried(self) -> None:
         class FailingClient:
@@ -283,6 +332,7 @@ class V2RamDocsTests(unittest.TestCase):
         self.assertEqual(aggregate["failed_case_count"], 1)
         self.assertEqual(aggregate["completion_rate"]["rate"], 0.0)
         self.assertIn("SemanticCompilationError", records[0]["error"])
+        self.assertIsNone(records[0]["raw_model_response"])
 
     def test_failed_case_counts_against_end_to_end_denominators(self) -> None:
         cases = self.cases[:2]
