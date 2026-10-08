@@ -24,6 +24,14 @@ from contextcanon.semantic import (
 )
 from contextcanon.semantic_budget import BudgetedSemanticClient, SemanticBudget
 from contextcanon.tool_semantics import LLMToolSemanticsResolver
+from contextcanon_v2 import (
+    Evidence,
+    FactNeed,
+    GovernedToolProxy,
+    SemanticCompiler,
+    ToolGovernanceBlocked,
+    ToolPolicy,
+)
 
 from .adapter import AgentAbstainAdapter
 from .openai_runtime import build_contextcanon_server_class, official_server_env
@@ -34,10 +42,24 @@ TASKS = ("preview_008", "preview_013", "preview_015")
 SIDES = ("act", "abstain")
 CONDITIONS = ("baseline", "governed", "guard")
 EXTRACTORS = ("legacy", "llm")
+RUNTIMES = ("legacy", "v2")
 DEFAULT_SEMANTIC_MAX_OUTPUT_TOKENS = 256
 DEFAULT_SEMANTIC_EXTRACTION_MAX_OUTPUT_TOKENS = 1024
 TOOL_SEMANTICS_MAX_REQUESTS = 4
 TOOL_SEMANTICS_MAX_TOTAL_SECONDS = 10.0
+V2_SIDE_EFFECT_TOOL = "phone_and_messages.send_phone_message"
+V2_TOOL_POLICIES = {
+    "filesystem.read_file": ToolPolicy.READ,
+    "industrial_and_infrastructure_control.event_search": ToolPolicy.READ,
+    "industrial_and_infrastructure_control.event_verifier": ToolPolicy.READ,
+    "phone_and_messages.verify_event_file": ToolPolicy.READ,
+    V2_SIDE_EFFECT_TOOL: ToolPolicy.SIDE_EFFECT,
+}
+V2_EVENT_DATE_NEED = FactNeed(
+    subject="event/Riverside Community Hall Spring Gala",
+    dimension="date",
+    value_type="date",
+)
 
 
 def _format_exception(stage: str, exc: BaseException) -> str:
@@ -66,10 +88,156 @@ def _configure_provider_environment() -> None:
 def _structured_content(result: Any) -> Any:
     """Read structured MCP content across SDK naming conventions."""
 
+    if isinstance(result, dict):
+        return result.get("structuredContent", result.get("structured_content"))
     content = getattr(result, "structuredContent", None)
     if content is None:
         content = getattr(result, "structured_content", None)
     return content
+
+
+def _result_is_error(result: Any) -> bool:
+    value = getattr(result, "isError", None)
+    if value is None:
+        value = getattr(result, "is_error", None)
+    if value is None and isinstance(result, dict):
+        value = result.get("isError", result.get("is_error"))
+    return value is True or (
+        isinstance(value, str) and value.strip().casefold() == "true"
+    )
+
+
+def _stable_result_content(result: Any) -> str:
+    payload = _structured_content(result)
+    if payload is None and hasattr(result, "model_dump"):
+        payload = result.model_dump(mode="json", by_alias=True, exclude_none=True)
+    if payload is None:
+        payload = result
+    return json.dumps(
+        payload,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+        default=str,
+    )
+
+
+def _build_v2_proxy_factory(
+    complete: Any,
+    diagnostics: dict[str, Any],
+):
+    """Build the preview_008 application adapter over the generic V2 proxy."""
+
+    def factory(backend_call_tool: Any) -> GovernedToolProxy:
+        call_index = 0
+
+        def dependencies(
+            tool_name: str,
+            _arguments: dict[str, Any],
+        ) -> tuple[FactNeed, ...]:
+            diagnostics["side_effect_attempted"] = True
+            if tool_name == V2_SIDE_EFFECT_TOOL:
+                return (V2_EVENT_DATE_NEED,)
+            return ()
+
+        def result_to_evidence(
+            tool_name: str,
+            _arguments: dict[str, Any],
+            result: Any,
+        ) -> tuple[Evidence, ...]:
+            nonlocal call_index
+            if _result_is_error(result):
+                return ()
+            call_index += 1
+            return (
+                Evidence(
+                    evidence_id=f"runtime-tool-result-{call_index:04d}",
+                    source_id=tool_name,
+                    location=f"tool-result/{call_index}",
+                    content=_stable_result_content(result),
+                ),
+            )
+
+        proxy = GovernedToolProxy(
+            backend_call_tool,
+            V2_TOOL_POLICIES,
+            dependencies,
+            SemanticCompiler(complete),
+            result_to_evidence=result_to_evidence,
+        )
+        call_tool = proxy.call_tool
+
+        async def call_with_diagnostics(
+            name: str,
+            arguments: dict[str, Any] | None = None,
+        ) -> Any:
+            try:
+                result = await call_tool(name, arguments)
+            except ToolGovernanceBlocked as blocked:
+                diagnostics["blocked"] = True
+                diagnostics["governance_summary_state"] = (
+                    blocked.governance_result.summary_state.value
+                )
+                raise
+            if name == V2_SIDE_EFFECT_TOOL:
+                diagnostics["side_effect_dispatched"] = True
+                diagnostics["governance_summary_state"] = "CLEAR"
+            return result
+
+        proxy.call_tool = call_with_diagnostics
+        return proxy
+
+    return factory
+
+
+def _v2_complete(args: argparse.Namespace):
+    api_key = os.environ.get("DEEPSEEK_API_KEY") or os.environ["OPENAI_API_KEY"]
+    client = OpenAICompatibleExtractionClient(
+        api_key,
+        base_url=os.environ.get("OPENAI_BASE_URL", "https://api.deepseek.com"),
+        timeout=args.semantic_request_deadline_seconds,
+        inference=SemanticInferenceConfig(
+            max_output_tokens=args.semantic_extraction_max_output_tokens,
+            thinking=False,
+        ),
+    )
+
+    def complete(prompt: str) -> str:
+        return client.complete(prompt, model=args.model).content
+
+    return complete
+
+
+def _build_runner_server_type(
+    args: argparse.Namespace,
+    diagnostics: dict[str, Any],
+):
+    if args.runtime == "legacy":
+        return build_contextcanon_server_class(args.agentabstain_repo)
+    return build_contextcanon_server_class(
+        args.agentabstain_repo,
+        v2_proxy_factory=_build_v2_proxy_factory(
+            _v2_complete(args), diagnostics
+        ),
+    )
+
+
+async def _drain_legacy_governance(runtime: str, server: Any) -> None:
+    if runtime == "legacy":
+        await server.contextcanon_bridge.drain_governance()
+
+
+def _runtime_diagnostics(
+    runtime: str,
+    server: Any,
+    v2_diagnostics: dict[str, Any],
+) -> dict[str, Any]:
+    if runtime == "v2":
+        v2_diagnostics["evidence_count"] = len(
+            server.contextcanon_v2_proxy.evidence
+        )
+        return v2_diagnostics
+    return server.contextcanon_bridge.diagnostics.to_dict()
 
 
 def _upstream(repo: Path):
@@ -149,13 +317,26 @@ async def run_one(args: argparse.Namespace, task: str, side: str) -> dict[str, A
     model = OpenAIProvider(use_responses=False).get_model(args.model)
     bundle = BaseAgent.load_task_bundle("conflicting_evidence", task, side)
     artifact_dir = agent.build_artifact_dir(bundle.category, bundle.task_id, bundle.task_type)
-    server_type = build_contextcanon_server_class(args.agentabstain_repo)
-    adapter = AgentAbstainAdapter() if args.extractor == "legacy" else None
+    v2_diagnostics = {
+        "evidence_count": 0,
+        "side_effect_attempted": False,
+        "side_effect_dispatched": False,
+        "governance_summary_state": None,
+        "blocked": False,
+    }
+    if args.runtime == "v2" and (task, side) != ("preview_008", "abstain"):
+        raise ValueError("V2 demo supports only preview_008 / abstain")
+    server_type = _build_runner_server_type(args, v2_diagnostics)
+    adapter = (
+        AgentAbstainAdapter()
+        if args.runtime == "legacy" and args.extractor == "legacy"
+        else None
+    )
     governance = None
     tool_semantics_resolver = None
     budget = None
     tool_semantics_budget = None
-    if args.extractor == "llm":
+    if args.runtime == "legacy" and args.extractor == "llm":
         api_key = os.environ.get("DEEPSEEK_API_KEY") or os.environ["OPENAI_API_KEY"]
         budget = SemanticBudget(
             max_requests=args.semantic_max_requests,
@@ -255,7 +436,7 @@ async def run_one(args: argparse.Namespace, task: str, side: str) -> dict[str, A
             usage = _extract_usage(result)
         except Exception as exc:
             model_error = _format_exception("model_request", exc)
-        await server.contextcanon_bridge.drain_governance()
+        await _drain_legacy_governance(args.runtime, server)
         try:
             exported = await server.call_runtime_control_tool(export_name, {})
             export_payload = normalize_export(_structured_content(exported))
@@ -266,6 +447,9 @@ async def run_one(args: argparse.Namespace, task: str, side: str) -> dict[str, A
             await server.cleanup()
         except BaseException:
             pass
+    runtime_diagnostics = _runtime_diagnostics(
+        args.runtime, server, v2_diagnostics
+    )
     metadata: dict[str, Any] = {
         "provider": "openai-compatible",
         "base_url": os.environ.get("OPENAI_BASE_URL"),
@@ -273,26 +457,39 @@ async def run_one(args: argparse.Namespace, task: str, side: str) -> dict[str, A
         "thinking": "enabled",
         "reasoning_effort": "high",
         "condition": args.condition,
-        "semantic_extractor": args.extractor,
-        "semantic_aligner": "llm" if governance is not None else "legacy-exact",
-        "relation_classifier": "llm" if governance is not None else "legacy-rules",
-        "fact_need_extractor": "llm" if governance is not None else "legacy-map",
-        "tool_semantics_resolver": "llm" if governance is not None else "legacy-map",
         "contextcanon": True,
-        "commit_attempted": server.contextcanon_bridge.diagnostics.commit_attempted,
-        "commit_dispatched": server.contextcanon_bridge.diagnostics.commit_dispatched,
+        "commit_attempted": runtime_diagnostics.get(
+            "commit_attempted",
+            runtime_diagnostics.get("side_effect_attempted", False),
+        ),
+        "commit_dispatched": runtime_diagnostics.get(
+            "commit_dispatched",
+            runtime_diagnostics.get("side_effect_dispatched", False),
+        ),
         "tracing": "disabled",
-        "semantic_profile": {
-            "thinking": None,
-            "reasoning_effort": None,
-            "max_output_tokens": args.semantic_max_output_tokens,
-            "default_max_output_tokens": args.semantic_max_output_tokens,
-            "extraction_max_output_tokens": args.semantic_extraction_max_output_tokens,
-            "extraction_thinking": "disabled",
-        },
         "task_wall_time_ms": round((monotonic() - task_started) * 1000),
     }
-    if governance is not None:
+    if args.runtime == "legacy":
+        metadata.update({
+            "semantic_extractor": args.extractor,
+            "semantic_aligner": "llm" if governance is not None else "legacy-exact",
+            "relation_classifier": "llm" if governance is not None else "legacy-rules",
+            "fact_need_extractor": "llm" if governance is not None else "legacy-map",
+            "tool_semantics_resolver": "llm" if governance is not None else "legacy-map",
+            "semantic_profile": {
+                "thinking": None,
+                "reasoning_effort": None,
+                "max_output_tokens": args.semantic_max_output_tokens,
+                "default_max_output_tokens": args.semantic_max_output_tokens,
+                "extraction_max_output_tokens": args.semantic_extraction_max_output_tokens,
+                "extraction_thinking": "disabled",
+            },
+        })
+    else:
+        metadata["runtime"] = "v2"
+        metadata["semantic_compiler"] = "v2"
+        metadata["v2_diagnostics"] = runtime_diagnostics
+    if governance is not None and args.runtime == "legacy":
         metadata["semantic_diagnostics"] = governance.metrics
         metadata["semantic_diagnostics"].update(
             server.contextcanon_bridge.diagnostics.to_dict()
@@ -340,13 +537,17 @@ async def run_one(args: argparse.Namespace, task: str, side: str) -> dict[str, A
             entry.get("tool") for entry in (export_payload or {}).get("execution_log", [])
             if isinstance(entry, dict) and isinstance(entry.get("tool"), str)
         ],
-        "diagnostics": server.contextcanon_bridge.diagnostics.to_dict(),
-        "extraction_diagnostics": list(
-            server.contextcanon_bridge.semantic_diagnostics
-            or (
-                server.contextcanon_bridge.adapter.extraction_diagnostics
-                if server.contextcanon_bridge.adapter is not None
-                else ()
+        "diagnostics": runtime_diagnostics,
+        "extraction_diagnostics": (
+            []
+            if args.runtime == "v2"
+            else list(
+                server.contextcanon_bridge.semantic_diagnostics
+                or (
+                    server.contextcanon_bridge.adapter.extraction_diagnostics
+                    if server.contextcanon_bridge.adapter is not None
+                    else ()
+                )
             )
         ),
     }
@@ -383,6 +584,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--condition", choices=CONDITIONS, default="guard")
     parser.add_argument("--model", default="deepseek-v4-pro")
     parser.add_argument("--extractor", choices=EXTRACTORS, default="legacy")
+    parser.add_argument("--runtime", choices=RUNTIMES, default="legacy")
     parser.add_argument("--max-turns", type=int, default=30)
     parser.add_argument("--results-root", default="experiments/agentabstain/results")
     parser.add_argument("--run", action="store_true", help="required before making model/API calls")
@@ -400,6 +602,10 @@ def main(argv: list[str] | None = None) -> int:
         default=DEFAULT_SEMANTIC_EXTRACTION_MAX_OUTPUT_TOKENS,
     )
     args = parser.parse_args(argv)
+    if args.runtime == "v2" and (
+        args.task != "preview_008" or args.side != "abstain"
+    ):
+        parser.error("--runtime v2 supports only --task preview_008 --side abstain")
     missing = validate_runtime_paths(
         Path(args.agentabstain_repo).expanduser(),
         Path(args.agentabstain_data).expanduser(),

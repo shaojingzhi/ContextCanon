@@ -4,7 +4,7 @@ import inspect
 import json
 from pathlib import Path
 import sys
-from types import ModuleType
+from types import ModuleType, SimpleNamespace
 import unittest
 from unittest import mock
 
@@ -19,6 +19,15 @@ from contextcanon_v2 import (
     ToolPolicy,
 )
 from experiments.agentabstain.openai_runtime import build_contextcanon_server_class
+from experiments.agentabstain.run_agent import (
+    V2_EVENT_DATE_NEED,
+    V2_SIDE_EFFECT_TOOL,
+    V2_TOOL_POLICIES,
+    _build_v2_proxy_factory,
+    _build_runner_server_type,
+    _drain_legacy_governance,
+    _runtime_diagnostics,
+)
 
 
 def _claim(
@@ -247,6 +256,177 @@ class V2ToolProxyTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(dispatched, ["source.read", "action.write"])
         self.assertIsInstance(server.contextcanon_v2_proxy, GovernedToolProxy)
+
+
+class V2AgentRunnerWiringTests(unittest.IsolatedAsyncioTestCase):
+    @staticmethod
+    def diagnostics() -> dict[str, object]:
+        return {
+            "evidence_count": 0,
+            "side_effect_attempted": False,
+            "side_effect_dispatched": False,
+            "governance_summary_state": None,
+            "blocked": False,
+        }
+
+    @staticmethod
+    def claim(value: str, evidence_ref: str) -> dict[str, object]:
+        return {
+            "subject": V2_EVENT_DATE_NEED.subject,
+            "predicate": V2_EVENT_DATE_NEED.dimension,
+            "value": value,
+            "value_type": "date",
+            "scope": {},
+            "modality": "DOCUMENTED",
+            "cardinality": "SINGLE",
+            "evidence_refs": [evidence_ref],
+        }
+
+    async def test_v2_runner_factory_captures_full_read_results_as_evidence(self) -> None:
+        calls: list[str] = []
+
+        async def backend(name: str, _arguments: dict) -> dict[str, object]:
+            calls.append(name)
+            return {"structuredContent": {"event": {"date": "2026-03-22"}}}
+
+        diagnostics = self.diagnostics()
+        factory = _build_v2_proxy_factory(
+            lambda _prompt: json.dumps({"claims": []}), diagnostics
+        )
+        proxy = factory(backend)
+
+        await proxy.call_tool("filesystem.read_file", {"path": "event-info.txt"})
+
+        self.assertEqual(calls, ["filesystem.read_file"])
+        self.assertEqual(len(proxy.evidence), 1)
+        evidence = proxy.evidence[0]
+        self.assertEqual(evidence.source_id, "filesystem.read_file")
+        self.assertEqual(evidence.location, "tool-result/1")
+        self.assertEqual(
+            json.loads(evidence.content),
+            {"event": {"date": "2026-03-22"}},
+        )
+
+    async def test_v2_runner_conflict_blocks_send_before_backend_dispatch(self) -> None:
+        calls: list[str] = []
+
+        async def backend(name: str, _arguments: dict) -> dict[str, object]:
+            calls.append(name)
+            return {"date": "2026-03-22" if len(calls) == 1 else "2026-03-23"}
+
+        response = json.dumps({
+            "claims": [
+                self.claim("2026-03-22", "E1"),
+                self.claim("2026-03-23", "E2"),
+            ]
+        })
+        completions: list[str] = []
+        diagnostics = self.diagnostics()
+        proxy = _build_v2_proxy_factory(
+            lambda prompt: completions.append(prompt) or response,
+            diagnostics,
+        )(backend)
+        await proxy.call_tool("filesystem.read_file", {})
+        await proxy.call_tool(
+            "industrial_and_infrastructure_control.event_verifier", {}
+        )
+
+        with self.assertRaises(ToolGovernanceBlocked):
+            await proxy.call_tool(V2_SIDE_EFFECT_TOOL, {"message_text": "date"})
+
+        self.assertEqual(len(completions), 1)
+        self.assertEqual(
+            calls,
+            [
+                "filesystem.read_file",
+                "industrial_and_infrastructure_control.event_verifier",
+            ],
+        )
+        self.assertEqual(diagnostics["governance_summary_state"], "UNRESOLVED")
+        self.assertTrue(diagnostics["blocked"])
+        self.assertFalse(diagnostics["side_effect_dispatched"])
+
+    async def test_v2_runner_clear_dispatches_send(self) -> None:
+        calls: list[str] = []
+
+        async def backend(name: str, _arguments: dict) -> dict[str, object]:
+            calls.append(name)
+            return {"ok": True}
+
+        diagnostics = self.diagnostics()
+        response = json.dumps({"claims": [self.claim("2026-03-22", "E1")]})
+        proxy = _build_v2_proxy_factory(
+            lambda _prompt: response, diagnostics
+        )(backend)
+        await proxy.call_tool("filesystem.read_file", {})
+
+        await proxy.call_tool(V2_SIDE_EFFECT_TOOL, {"message_text": "date"})
+
+        self.assertEqual(calls[-1], V2_SIDE_EFFECT_TOOL)
+        self.assertEqual(diagnostics["governance_summary_state"], "CLEAR")
+        self.assertTrue(diagnostics["side_effect_dispatched"])
+        self.assertFalse(diagnostics["blocked"])
+
+    def test_v2_demo_uses_only_explicit_static_tool_policies(self) -> None:
+        self.assertEqual(
+            V2_TOOL_POLICIES,
+            {
+                "filesystem.read_file": ToolPolicy.READ,
+                "industrial_and_infrastructure_control.event_search": ToolPolicy.READ,
+                "industrial_and_infrastructure_control.event_verifier": ToolPolicy.READ,
+                "phone_and_messages.verify_event_file": ToolPolicy.READ,
+                V2_SIDE_EFFECT_TOOL: ToolPolicy.SIDE_EFFECT,
+            },
+        )
+
+    def test_v2_mode_passes_proxy_factory_and_legacy_default_does_not(self) -> None:
+        v2_args = SimpleNamespace(runtime="v2", agentabstain_repo="repo")
+        legacy_args = SimpleNamespace(runtime="legacy", agentabstain_repo="repo")
+        complete = lambda _prompt: json.dumps({"claims": []})
+        diagnostics = self.diagnostics()
+
+        with (
+            mock.patch(
+                "experiments.agentabstain.run_agent._v2_complete",
+                return_value=complete,
+            ) as v2_complete,
+            mock.patch(
+                "experiments.agentabstain.run_agent.build_contextcanon_server_class",
+                return_value="server-type",
+            ) as build_server,
+        ):
+            self.assertEqual(
+                _build_runner_server_type(v2_args, diagnostics), "server-type"
+            )
+            self.assertIn("v2_proxy_factory", build_server.call_args.kwargs)
+            v2_complete.assert_called_once_with(v2_args)
+
+            build_server.reset_mock()
+            v2_complete.reset_mock()
+            self.assertEqual(
+                _build_runner_server_type(legacy_args, diagnostics), "server-type"
+            )
+            build_server.assert_called_once_with("repo")
+            v2_complete.assert_not_called()
+
+    async def test_v2_finish_path_never_dereferences_legacy_bridge(self) -> None:
+        class Proxy:
+            evidence = (object(), object())
+
+        class V2Server:
+            contextcanon_v2_proxy = Proxy()
+
+            @property
+            def contextcanon_bridge(self):
+                raise AssertionError("legacy bridge accessed")
+
+        server = V2Server()
+        diagnostics = self.diagnostics()
+
+        await _drain_legacy_governance("v2", server)
+        result = _runtime_diagnostics("v2", server, diagnostics)
+
+        self.assertEqual(result["evidence_count"], 2)
 
 
 if __name__ == "__main__":
