@@ -72,9 +72,16 @@ outcomes:
 
 [`experiments/v2_langgraph_demo.py`](experiments/v2_langgraph_demo.py) is a
 second, independent runtime integration using LangGraph's graph/model/tool
-loop and the same `GovernedToolProxy`. It required no V2 core changes and is
-currently validated offline with a scripted model only; no live LangGraph model
-run is claimed.
+loop and the same `GovernedToolProxy`. It required no V2 core changes.
+
+An opt-in [live runner](experiments/v2_langgraph_live.py) used DeepSeek for
+three LangGraph tool-selection turns.
+The model selected `read_policy`, `read_runtime_state`, then attempted
+`deploy_release`; two runtime results joined the static policy as three pieces
+of `Evidence`. A fourth model call performed semantic compilation, after which
+deterministic governance returned `UNRESOLVED` and blocked deployment before
+the backend received the side-effect call. The run completed without retry or
+error, and `side_effect_dispatched` was false.
 
 ## Engineering regression story
 

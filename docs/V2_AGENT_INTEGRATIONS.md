@@ -11,10 +11,12 @@ OpenAI Agents SDK --\
 LangGraph ----------/
 ```
 
-The LangGraph example uses a `StateGraph` model/tool loop. Its offline scripted
-model selects two read tools and then attempts a deployment. Read results become
-`Evidence`; the side effect is dispatched only when the existing semantic
-compiler and deterministic governance return `CLEAR`.
+The LangGraph example uses a `StateGraph` model/tool loop. Both its offline
+scripted model and its opt-in live DeepSeek runner select tools through the graph.
+In the live smoke, the model selected two read tools and then attempted a
+deployment. The read results became `Evidence`; semantic compilation identified
+the required `stable` channel and observed `canary` channel, and deterministic
+governance blocked the side effect as `UNRESOLVED` before backend dispatch.
 
 ## Architectural comparison
 

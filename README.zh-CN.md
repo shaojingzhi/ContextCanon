@@ -55,7 +55,9 @@ Agent 运行时负责选择工具并控制模型循环。ContextCanon 只负责�
 
 ### LangGraph
 
-[`experiments/v2_langgraph_demo.py`](experiments/v2_langgraph_demo.py) 是第二个独立运行时集成。它使用 LangGraph 的图/模型/工具循环，并调用同一个 `GovernedToolProxy`。该集成没有要求修改 V2 核心，目前仅使用脚本化模型完成了离线验证；项目没有声称做过真实模型的 LangGraph 在线运行。
+[`experiments/v2_langgraph_demo.py`](experiments/v2_langgraph_demo.py) 是第二个独立运行时集成。它使用 LangGraph 的图/模型/工具循环，并调用同一个 `GovernedToolProxy`。该集成没有要求修改 V2 核心。
+
+随后，[live runner](experiments/v2_langgraph_live.py) 显式启用 DeepSeek 完成了 3 轮 LangGraph 工具选择。模型依次选择 `read_policy`、`read_runtime_state`，然后尝试 `deploy_release`；两个运行时结果与静态策略共同组成 3 条 `Evidence`。第 4 次模型调用执行语义编译，之后确定性治理返回 `UNRESOLVED`，并在副作用调用到达后端之前阻止部署。整个运行没有重试或报错，`side_effect_dispatched` 为 false。
 
 ## 工程回归过程
 
