@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
-import sys
 import os
+import sys
+from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any
 
@@ -13,6 +14,7 @@ from contextcanon.tool_semantics import (
     ToolSemantics,
     ToolSemanticsResolver,
 )
+from contextcanon_v2 import GovernedToolProxy, ToolGovernanceBlocked
 
 from .adapter import AgentAbstainAdapter
 from .harness import RuntimeMCPBridge
@@ -75,8 +77,15 @@ def official_server_env() -> dict[str, str]:
     }
 
 
-def build_contextcanon_server_class(agentabstain_repo: str | Path):
-    """Create a subclass without importing upstream SDKs at module import time."""
+def build_contextcanon_server_class(
+    agentabstain_repo: str | Path,
+    *,
+    v2_proxy_factory: Callable[
+        [Callable[[str, dict[str, Any]], Awaitable[Any]]], GovernedToolProxy
+    ]
+    | None = None,
+):
+    """Create the demo MCP adapter, optionally routed through the V2 proxy."""
 
     repo = str(Path(agentabstain_repo).expanduser().resolve())
     if repo not in sys.path:
@@ -93,14 +102,21 @@ def build_contextcanon_server_class(agentabstain_repo: str | Path):
                      condition: str, **kwargs: Any):
             super().__init__(*args, **kwargs)
             self._contextcanon_tool_metadata: dict[str, dict[str, Any]] = {}
-            self._contextcanon_bridge = RuntimeMCPBridge(
-                self._dispatch_canonical,
-                tool_semantics_resolver or AgentAbstainStaticToolSemanticsResolver(),
-                condition=condition,
-                adapter=adapter,
-                extractor=extractor,
-                governance=governance,
+            self._contextcanon_v2_proxy = (
+                v2_proxy_factory(self._dispatch_canonical)
+                if v2_proxy_factory is not None
+                else None
             )
+            self._contextcanon_bridge = None
+            if self._contextcanon_v2_proxy is None:
+                self._contextcanon_bridge = RuntimeMCPBridge(
+                    self._dispatch_canonical,
+                    tool_semantics_resolver or AgentAbstainStaticToolSemanticsResolver(),
+                    condition=condition,
+                    adapter=adapter,
+                    extractor=extractor,
+                    governance=governance,
+                )
 
         async def list_tools(self, run_context=None, agent=None):
             tools = await super().list_tools(run_context, agent)
@@ -120,7 +136,8 @@ def build_contextcanon_server_class(agentabstain_repo: str | Path):
                     "annotations": getattr(tool, "annotations", None),
                 }
             self._contextcanon_tool_metadata = metadata
-            await self._contextcanon_bridge.prepare_tool_semantics(metadata)
+            if self._contextcanon_bridge is not None:
+                await self._contextcanon_bridge.prepare_tool_semantics(metadata)
             return tools
 
         async def call_runtime_control_tool(
@@ -156,15 +173,32 @@ def build_contextcanon_server_class(agentabstain_repo: str | Path):
             canonical_name = canonical_tool_name(
                 tool_name, getattr(self, "_encoded_to_original", {})
             )
-            metadata = self._contextcanon_tool_metadata.get(canonical_name, {})
-            result = await self._contextcanon_bridge.call_tool(
-                canonical_name,
-                arguments,
-                meta=meta,
-                tool_description=metadata.get("description"),
-                input_schema=metadata.get("input_schema"),
-                annotations=metadata.get("annotations"),
-            )
+            if self._contextcanon_v2_proxy is not None:
+                try:
+                    result = await self._contextcanon_v2_proxy.call_tool(
+                        canonical_name, arguments
+                    )
+                except ToolGovernanceBlocked as blocked:
+                    result = {
+                        "isError": True,
+                        "structuredContent": {
+                            "message": str(blocked),
+                            "summary_state": (
+                                blocked.governance_result.summary_state.value
+                            ),
+                        },
+                    }
+            else:
+                metadata = self._contextcanon_tool_metadata.get(canonical_name, {})
+                assert self._contextcanon_bridge is not None
+                result = await self._contextcanon_bridge.call_tool(
+                    canonical_name,
+                    arguments,
+                    meta=meta,
+                    tool_description=metadata.get("description"),
+                    input_schema=metadata.get("input_schema"),
+                    annotations=metadata.get("annotations"),
+                )
             # The Agents SDK expects an MCP CallToolResult object.  The local
             # bridge deliberately uses JSON dictionaries for pure unit tests,
             # so adapt only at this official SDK boundary.
@@ -180,7 +214,11 @@ def build_contextcanon_server_class(agentabstain_repo: str | Path):
             return result
 
         @property
-        def contextcanon_bridge(self) -> RuntimeMCPBridge:
+        def contextcanon_bridge(self) -> RuntimeMCPBridge | None:
             return self._contextcanon_bridge
+
+        @property
+        def contextcanon_v2_proxy(self) -> GovernedToolProxy | None:
+            return self._contextcanon_v2_proxy
 
     return ContextCanonOpenAIMCPServer

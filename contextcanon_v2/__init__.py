@@ -13,6 +13,7 @@ from .models import (
     RelationRecord,
     SummaryState,
 )
+from .tool_proxy import GovernedToolProxy, ToolGovernanceBlocked, ToolPolicy
 
 __all__ = [
     "Cardinality",
@@ -27,4 +28,7 @@ __all__ = [
     "SemanticCompilationError",
     "SemanticCompiler",
     "govern",
+    "GovernedToolProxy",
+    "ToolGovernanceBlocked",
+    "ToolPolicy",
 ]
