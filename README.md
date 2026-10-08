@@ -1,5 +1,7 @@
 # ContextCanon V2
 
+[中文](README.zh-CN.md)
+
 > Compile conflicting evidence into a small, traceable decision before an agent
 > performs a side effect.
 
