@@ -63,10 +63,13 @@
 | --- | ---: | ---: |
 | Relation accuracy | 12/14 = **85.71%** | 8/14 = **57.14%** |
 | Summary accuracy | 14/14 = **100%** | 11/14 = **78.57%** |
-| Decision exact accuracy | 9/14 = **64.29%** | 7/14 = **50.00%** |
+| Governance decision exact¹ | 12/14 = **85.71%** | 7/14 = **50.00%** |
+| Claim / full end-to-end exact² | 9/14 = **64.29%** | n/a（Direct 不输出 Claims） |
 | Schema / compilation success | 14/14 | 14/14 |
 | Mean model latency | 1730.6 ms | 1148.8 ms |
 | P50 / P95 latency | 1717.0 / 2758.7 ms | 1071.8 / 2151.5 ms |
+
+¹ relation 与 summary 同时完全匹配；² Claim 完全匹配，且 relation 与 summary 同时完全匹配。
 
 ContextCanon 的 14 条分类为：9 `PASS`、2 `CLAIM_SEMANTICS_ERROR`、3 `CLAIM_WRONG_GOVERNANCE_RIGHT`、0 deterministic governance error、0 compilation error。Claim 字段中最弱的是 scope（17/24，70.83%）和 modality（18/24，75.00%）。
 
@@ -184,6 +187,8 @@ V2.2 的 42 个失败为 39 个 semantic completion/provider failure 和 3 个�
 - SemanticCompiler 生成 `stable/REQUIRED` 与 `canary/OBSERVED` Claims；`govern()` 返回 `UNRESOLVED`。
 - `deploy_release` 在到达 backend 前被阻止；`side_effect_dispatched=false`。
 - 3 次 Agent 模型调用 + 1 次语义编译，共 4 次 provider call；总 token 1,584；无 retry、无错误。
+
+该 live smoke 是刻意设计的路径覆盖实验：prompt 要求模型读取两个来源后，即使发现冲突也尝试 `deploy_release`，以便由治理边界作出决定。它证明了真实模型选择 -> LangGraph runtime -> READ 结果成为 Evidence -> side effect 到达 `GovernedToolProxy` -> `SemanticCompiler` -> 确定性治理 -> backend 被阻止的完整链路；它不证明一个不受该指令约束的 Agent 在发现冲突后仍会自然尝试不安全的副作用。
 
 #### 单次延迟分解
 

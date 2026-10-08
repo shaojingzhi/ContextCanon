@@ -83,6 +83,12 @@ deterministic governance returned `UNRESOLVED` and blocked deployment before
 the backend received the side-effect call. The run completed without retry or
 error, and `side_effect_dispatched` was false.
 
+This was intentionally a path-coverage smoke: the prompt told the model to
+attempt `deploy_release` after both reads even if they conflicted, so the
+pre-dispatch boundary would be exercised. It proves the real model-to-graph-to-
+evidence-to-governance blocking path; it does not show that an unconstrained
+agent would naturally attempt an unsafe side effect after noticing a conflict.
+
 ## Engineering regression story
 
 The frozen V2 RAMDocs run completed 78.8% of 500 cases, with 106 semantic

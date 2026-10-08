@@ -59,6 +59,8 @@ Agent 运行时负责选择工具并控制模型循环。ContextCanon 只负责�
 
 随后，[live runner](experiments/v2_langgraph_live.py) 显式启用 DeepSeek 完成了 3 轮 LangGraph 工具选择。模型依次选择 `read_policy`、`read_runtime_state`，然后尝试 `deploy_release`；两个运行时结果与静态策略共同组成 3 条 `Evidence`。第 4 次模型调用执行语义编译，之后确定性治理返回 `UNRESOLVED`，并在副作用调用到达后端之前阻止部署。整个运行没有重试或报错，`side_effect_dispatched` 为 false。
 
+这是刻意设计的路径覆盖 smoke：prompt 要求模型读取两个来源后，即使它们冲突也尝试 `deploy_release`，从而覆盖 dispatch 前治理边界。它证明了真实模型 -> LangGraph -> Evidence -> `GovernedToolProxy` -> 语义编译 -> 确定性治理 -> backend 被阻止的链路；它不证明一个不受该指令约束的 Agent 在发现冲突后仍会自然尝试不安全的副作用。
+
 ## 工程回归过程
 
 冻结的 V2 RAMDocs 运行在 500 个样本上的完成率为 78.8%，共有 106 个语义编译失败。对运行轨迹的分析将大部分失败定位到严格类型表示：82 个日期值和 20 个数值在语义上有效，但不符合确定性校验所接受的形式。

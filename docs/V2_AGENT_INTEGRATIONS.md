@@ -18,6 +18,19 @@ deployment. The read results became `Evidence`; semantic compilation identified
 the required `stable` channel and observed `canary` channel, and deterministic
 governance blocked the side effect as `UNRESOLVED` before backend dispatch.
 
+The live prompt intentionally instructed the model to attempt `deploy_release`
+after both reads even if they conflicted. This was a path-coverage smoke proving
+the real model -> LangGraph runtime -> Evidence -> `GovernedToolProxy` ->
+`SemanticCompiler` -> deterministic governance -> blocked backend chain. It does
+not claim that an unconstrained agent would naturally attempt an unsafe side
+effect after recognizing a conflict.
+
+Here, “LangGraph integration” means a LangGraph `StateGraph` with custom agent
+and tool nodes calling the existing proxy. It does not claim LangChain native
+`@tool`, LangGraph `ToolNode`, or LangChain MCP adapter integration. The purpose
+is to demonstrate runtime/framework independence of `GovernedToolProxy`, not
+coverage of every native LangChain tool API.
+
 ## Architectural comparison
 
 These are complementary architectural emphases, not benchmark results or a
@@ -45,4 +58,6 @@ At this demonstration revision, `contextcanon_v2` is approximately 742 lines in
 total and `GovernedToolProxy` is approximately 88 lines. Legacy implementations,
 benchmarks, and experiment runners are not part of that V2 core count. The
 LangGraph package is an optional demonstration dependency; the V2 core does not
-import it.
+import it. The live experiment reuses the legacy package's OpenAI-compatible
+client only as experiment-side provider plumbing; `contextcanon_v2` neither
+imports nor depends on the legacy runtime.

@@ -10,6 +10,8 @@ from time import monotonic
 from typing import Any
 from urllib.parse import urlsplit
 
+# Experiment-side provider plumbing only; contextcanon_v2 does not import or
+# depend on the legacy runtime package.
 from contextcanon.semantic import (
     OpenAICompatibleExtractionClient,
     SemanticInferenceConfig,
