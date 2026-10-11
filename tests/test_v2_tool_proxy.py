@@ -154,6 +154,79 @@ class V2ToolProxyTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result, {"dispatched": True})
         self.assertEqual(backend.calls, [("release.deploy", {"channel": "stable"})])
 
+    async def test_same_semantic_inputs_compile_once(self) -> None:
+        backend = Backend()
+        completions: list[str] = []
+        response = json.dumps({"claims": [_claim("stable", "E1", modality="REQUIRED")]})
+        compiler = SemanticCompiler(
+            lambda _prompt: completions.append("called") or response
+        )
+        proxy = self.proxy(compiler, backend, initial_evidence=(self.static,))
+
+        await proxy.call_tool("release.deploy", {"channel": "stable"})
+        await proxy.call_tool("release.deploy", {"channel": "stable"})
+
+        self.assertEqual(len(completions), 1)
+        self.assertEqual([name for name, _ in backend.calls], ["release.deploy"] * 2)
+
+    async def test_read_evidence_invalidates_semantic_cache(self) -> None:
+        backend = Backend()
+        completions: list[str] = []
+        response = json.dumps({"claims": [_claim("stable", "E1", modality="REQUIRED")]})
+        compiler = SemanticCompiler(
+            lambda _prompt: completions.append("called") or response
+        )
+        proxy = self.proxy(compiler, backend, initial_evidence=(self.static,))
+
+        await proxy.call_tool("release.deploy", {"channel": "stable"})
+        await proxy.call_tool("release.read_runtime")
+        await proxy.call_tool("release.deploy", {"channel": "stable"})
+
+        self.assertEqual(len(completions), 2)
+
+    async def test_different_fact_needs_do_not_share_compilation(self) -> None:
+        backend = Backend()
+        completions: list[str] = []
+        response = json.dumps({"claims": [_claim("stable", "E1", modality="REQUIRED")]})
+        compiler = SemanticCompiler(
+            lambda _prompt: completions.append("called") or response
+        )
+        other_need = FactNeed("release", "owner", value_type="string")
+        proxy = GovernedToolProxy(
+            backend.call_tool,
+            {
+                "release.deploy": ToolPolicy.SIDE_EFFECT,
+                "release.deploy_alt": ToolPolicy.SIDE_EFFECT,
+            },
+            lambda name, _arguments: (self.need if name == "release.deploy" else other_need,),
+            compiler,
+            initial_evidence=(self.static,),
+        )
+
+        await proxy.call_tool("release.deploy", {"channel": "stable"})
+        with self.assertRaises(ToolGovernanceBlocked):
+            await proxy.call_tool("release.deploy_alt")
+
+        self.assertEqual(len(completions), 2)
+
+    async def test_compilation_failure_is_not_cached(self) -> None:
+        backend = Backend()
+        completions: list[str] = []
+        compiler = SemanticCompiler(
+            lambda _prompt: completions.append("called") or "not json"
+        )
+        proxy = self.proxy(compiler, backend, initial_evidence=(self.static,))
+
+        for _ in range(2):
+            with self.assertRaises(ToolGovernanceBlocked) as raised:
+                await proxy.call_tool("release.deploy", {"channel": "stable"})
+            self.assertEqual(
+                raised.exception.governance_result.summary_state,
+                SummaryState.INCOMPLETE,
+            )
+
+        self.assertEqual(len(completions), 2)
+
     async def test_incomplete_blocks_before_dispatch(self) -> None:
         backend = Backend()
         proxy = self.proxy(_compiler(), backend)

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from enum import StrEnum
 from typing import Any
@@ -27,6 +28,35 @@ class ToolGovernanceBlocked(RuntimeError):
         self.governance_result = result
 
 
+def _semantic_cache_key(
+    evidence: Sequence[Evidence], needs: Sequence[FactNeed]
+) -> str:
+    """Serialize the ordered semantic inputs into one deterministic key."""
+    payload = {
+        "evidence": [
+            {
+                "evidence_id": item.evidence_id,
+                "source_id": item.source_id,
+                "location": item.location,
+                "content": item.content,
+                "observed_at": item.observed_at,
+                "source_revision": item.source_revision,
+            }
+            for item in evidence
+        ],
+        "fact_needs": [
+            {
+                "subject": item.subject,
+                "dimension": item.dimension,
+                "scope_constraint": item.scope_constraint,
+                "value_type": item.value_type,
+            }
+            for item in needs
+        ],
+    }
+    return json.dumps(payload, ensure_ascii=True, sort_keys=True, separators=(",", ":"))
+
+
 class GovernedToolProxy:
     """Collect read evidence and gate side effects without an agent dependency."""
 
@@ -49,6 +79,7 @@ class GovernedToolProxy:
         self._compiler = compiler
         self._evidence = list(initial_evidence)
         self._result_to_evidence = result_to_evidence
+        self._semantic_cache: dict[str, tuple] = {}
 
     @property
     def evidence(self) -> tuple[Evidence, ...]:
@@ -74,8 +105,12 @@ class GovernedToolProxy:
             return result
 
         needs = tuple(self._dependency_resolver(name, arguments))
+        cache_key = _semantic_cache_key(self._evidence, needs)
         try:
-            claims = self._compiler.compile(self._evidence, needs)
+            claims = self._semantic_cache.get(cache_key)
+            if claims is None:
+                claims = self._compiler.compile(self._evidence, needs)
+                self._semantic_cache[cache_key] = claims
             decision = govern(claims, needs)
         except SemanticCompilationError:
             decision = govern((), needs, compilation_error=True)
