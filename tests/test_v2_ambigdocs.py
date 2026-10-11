@@ -1,14 +1,28 @@
 from __future__ import annotations
 
+from contextlib import redirect_stdout
+import io
+import json
+from pathlib import Path
+import tempfile
 import unittest
+from unittest import mock
 
+from contextcanon.semantic import SemanticCompletion
 from contextcanon_v2 import Cardinality, Claim, Modality, SemanticCompiler
+from experiments import v2_ambigdocs as ambigdocs
 from experiments.v2_ambigdocs import (
+    MAX_OUTPUT_TOKENS,
+    MODEL,
+    TIMEOUT_SECONDS,
+    build_client,
     direct_prompt,
     load_sample_manifest,
+    main,
     map_row,
     parse_direct_response,
     project_contextcanon_claims,
+    run_live,
     sample_qids,
     score_predictions,
 )
@@ -24,6 +38,50 @@ def row(qid: int = 7) -> dict:
             {"pid": "p2", "title": "Mercury (element)", "text": "element text", "answer": "liquid metal"},
         ],
     }
+
+
+def claim_response(case) -> str:
+    return json.dumps({
+        "claims": [
+            {
+                "subject": target.entity,
+                "predicate": case.question,
+                "value": target.answer,
+                "value_type": "string",
+                "scope": {},
+                "modality": "DOCUMENTED",
+                "cardinality": "SINGLE",
+                "evidence_refs": [target.evidence_id],
+            }
+            for target in case.gold
+        ]
+    })
+
+
+def direct_response(case) -> str:
+    return json.dumps({
+        "associations": [
+            {"entity": target.entity, "answer": target.answer, "evidence_ref": target.evidence_id}
+            for target in case.gold
+        ]
+    })
+
+
+class FakeClient:
+    def __init__(self, responses) -> None:
+        self.responses = list(responses)
+        self.calls: list[tuple[str, str]] = []
+
+    def complete(self, prompt: str, *, model: str) -> SemanticCompletion:
+        self.calls.append((prompt, model))
+        response = self.responses.pop(0)
+        if isinstance(response, Exception):
+            raise response
+        return SemanticCompletion(
+            response,
+            usage={"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15},
+            model=model,
+        )
 
 
 class AmbigDocsTests(unittest.TestCase):
@@ -124,6 +182,80 @@ class AmbigDocsTests(unittest.TestCase):
         self.assertEqual(metrics["schema_success_rate"]["rate"], 0.0)
         self.assertEqual(metrics["completed_only_metrics"]["case_count"], 0)
         self.assertEqual(metrics["end_to_end_metrics"]["normalized_exact_answer_association"]["rate"], 0.0)
+
+    def test_frozen_client_configuration_is_non_thinking_flash(self) -> None:
+        client = build_client("not-a-real-key", "https://api.deepseek.com")
+        self.assertEqual(MODEL, "deepseek-flash")
+        self.assertEqual(client.timeout, TIMEOUT_SECONDS)
+        self.assertEqual(client.inference.max_output_tokens, MAX_OUTPUT_TOKENS)
+        self.assertFalse(client.inference.thinking)
+        self.assertIsNone(client.inference.reasoning_effort)
+
+    def test_live_runner_interleaves_one_call_per_case_and_uses_frozen_scorer(self) -> None:
+        cases = (map_row(row(7)), map_row(row(8)))
+        client = FakeClient((
+            claim_response(cases[0]),
+            direct_response(cases[0]),
+            direct_response(cases[1]),
+            claim_response(cases[1]),
+        ))
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            with mock.patch.object(ambigdocs, "score_predictions", wraps=score_predictions) as scorer:
+                with redirect_stdout(io.StringIO()):
+                    aggregate = run_live(
+                        cases,
+                        client,
+                        contextcanon_path=root / "contextcanon.jsonl",
+                        direct_path=root / "direct.jsonl",
+                        aggregate_path=root / "aggregate.json",
+                    )
+            self.assertEqual(scorer.call_count, 2)
+            self.assertEqual(len((root / "contextcanon.jsonl").read_text().splitlines()), 2)
+            self.assertEqual(len((root / "direct.jsonl").read_text().splitlines()), 2)
+        self.assertEqual(len(client.calls), 4)
+        self.assertEqual([model for _prompt, model in client.calls], [MODEL] * 4)
+        self.assertEqual(
+            ["Return only JSON matching" in prompt for prompt, _model in client.calls],
+            [True, False, False, True],
+        )
+        self.assertEqual(aggregate["total_provider_calls"], 4)
+        self.assertEqual(aggregate["systems"]["contextcanon"]["successful_cases"], 2)
+        self.assertEqual(aggregate["systems"]["direct"]["successful_cases"], 2)
+        self.assertEqual(
+            aggregate["systems"]["contextcanon"]["metrics"]["end_to_end_metrics"]
+            ["normalized_exact_answer_association"]["rate"],
+            1.0,
+        )
+
+    def test_failed_completion_is_recorded_once_without_retry(self) -> None:
+        case = map_row(row())
+        client = FakeClient((TimeoutError("offline test timeout"), direct_response(case)))
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            with redirect_stdout(io.StringIO()):
+                aggregate = run_live(
+                    (case,),
+                    client,
+                    contextcanon_path=root / "contextcanon.jsonl",
+                    direct_path=root / "direct.jsonl",
+                    aggregate_path=root / "aggregate.json",
+                )
+            failed = json.loads((root / "contextcanon.jsonl").read_text().strip())
+        self.assertEqual(len(client.calls), 2)
+        self.assertFalse(failed["success"])
+        self.assertEqual(failed["associations"], [])
+        self.assertEqual(aggregate["systems"]["contextcanon"]["provider_calls"], 1)
+        self.assertEqual(aggregate["systems"]["contextcanon"]["failed_cases"], 1)
+
+    def test_default_invocation_makes_zero_api_calls(self) -> None:
+        cases = tuple(map_row(row(qid)) for qid in load_sample_manifest())
+        with mock.patch.object(ambigdocs, "load_cases", return_value=cases):
+            with mock.patch.object(ambigdocs, "build_client") as client_builder:
+                with redirect_stdout(io.StringIO()) as output:
+                    self.assertEqual(main([]), 0)
+        client_builder.assert_not_called()
+        self.assertEqual(json.loads(output.getvalue())["api_calls"], 0)
 
 
 if __name__ == "__main__":

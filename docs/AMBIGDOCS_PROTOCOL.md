@@ -2,6 +2,15 @@
 
 Status: offline preparation only. No model/API run has been performed.
 
+## Frozen pre-live provider configuration
+
+Before any live AmbigDocs result was observed, the provider configuration was
+frozen for API cost control: model `deepseek-flash`, official DeepSeek
+OpenAI-compatible endpoint, thinking disabled explicitly, maximum 2,048 output
+tokens, and a 60-second timeout. ContextCanon and Direct use these identical
+settings. This pre-live amendment changes no semantic protocol, prompt, Gold,
+sample, normalization, or scorer.
+
 ## Source and observed schema
 
 The official test split is `test.json` from the public
