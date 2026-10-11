@@ -99,9 +99,12 @@ class GovernedToolProxy:
         if policy is ToolPolicy.READ:
             result = await self._backend_call_tool(name, arguments)
             if self._result_to_evidence is not None:
-                self._evidence.extend(
+                new_evidence = tuple(
                     self._result_to_evidence(name, arguments, result)
                 )
+                if new_evidence:
+                    self._evidence.extend(new_evidence)
+                    self._semantic_cache.clear()
             return result
 
         needs = tuple(self._dependency_resolver(name, arguments))

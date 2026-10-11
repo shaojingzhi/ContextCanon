@@ -184,6 +184,31 @@ class V2ToolProxyTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(len(completions), 2)
 
+    async def test_read_without_new_evidence_keeps_semantic_cache(self) -> None:
+        backend = Backend()
+        completions: list[str] = []
+        response = json.dumps({"claims": [_claim("stable", "E1", modality="REQUIRED")]})
+        compiler = SemanticCompiler(
+            lambda _prompt: completions.append("called") or response
+        )
+        proxy = GovernedToolProxy(
+            backend.call_tool,
+            {
+                "release.read_runtime": ToolPolicy.READ,
+                "release.deploy": ToolPolicy.SIDE_EFFECT,
+            },
+            lambda _name, _arguments: (self.need,),
+            compiler,
+            initial_evidence=(self.static,),
+            result_to_evidence=lambda _name, _arguments, _result: (),
+        )
+
+        await proxy.call_tool("release.deploy", {"channel": "stable"})
+        await proxy.call_tool("release.read_runtime")
+        await proxy.call_tool("release.deploy", {"channel": "stable"})
+
+        self.assertEqual(len(completions), 1)
+
     async def test_different_fact_needs_do_not_share_compilation(self) -> None:
         backend = Backend()
         completions: list[str] = []
