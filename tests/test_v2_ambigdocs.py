@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import unittest
 
-from contextcanon_v2 import Cardinality, Claim, Modality
+from contextcanon_v2 import Cardinality, Claim, Modality, SemanticCompiler
 from experiments.v2_ambigdocs import (
     direct_prompt,
     load_sample_manifest,
@@ -33,12 +33,26 @@ class AmbigDocsTests(unittest.TestCase):
         self.assertEqual(case.evidence[0].source_id, "ambigdocs:7:p1")
         self.assertEqual(case.evidence[0].location, "Mercury (planet)")
         self.assertEqual([need.subject for need in case.fact_needs], ["Mercury (planet)", "Mercury (element)"])
+        self.assertEqual(
+            [need.dimension for need in case.fact_needs],
+            [row()["question"], row()["question"]],
+        )
         self.assertEqual(case.gold[1].pid, "p2")
+
+    def test_compiler_receives_original_question_through_fact_needs(self) -> None:
+        case = map_row(row())
+        prompts: list[str] = []
+        compiler = SemanticCompiler(lambda prompt: prompts.append(prompt) or '{"claims":[]}')
+        compiler.compile(case.evidence, case.fact_needs)
+        self.assertEqual(len(prompts), 1)
+        self.assertIn(row()["question"], prompts[0])
 
     def test_direct_prompt_has_same_target_and_no_gold_answers(self) -> None:
         prompt = direct_prompt(map_row(row()))
+        self.assertIn(row()["question"], prompt)
         self.assertIn("Mercury (planet)", prompt)
         self.assertIn("p1", prompt)
+        self.assertNotIn("Ambiguous entity:", prompt)
         self.assertNotIn("rocky", prompt)
         self.assertNotIn("liquid metal", prompt)
 

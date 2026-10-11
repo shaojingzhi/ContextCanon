@@ -38,9 +38,15 @@ For each document, the adapter creates one `Evidence`:
 For each document entity, it creates one `FactNeed`:
 
 - `subject`: document `title`;
-- `dimension`: `answer`;
+- `dimension`: the original AmbigDocs `question`, preserved exactly;
 - `value_type`: `string`;
 - no scope constraint.
+
+The original question reaches `SemanticCompiler` through the serialized
+`FactNeed.dimension`; the compiler otherwise receives only FactNeeds and
+Evidence. The Direct baseline receives the same question and the same
+FactNeeds, so both systems receive equivalent semantic task information. This
+protocol-wiring correction was made before any live AmbigDocs model run.
 
 Gold is a separate mechanical association target `(title, answer, evidence_id,
 pid)`. It does not invent Claim modality, cardinality, scope, authority, or
@@ -98,11 +104,11 @@ and it does not provide general governance accuracy Gold.
 
 ## Direct baseline contract
 
-The future Direct one-call baseline uses the same question, ambiguous entity,
-FactNeeds, Evidence refs, source/location metadata, and document text. It returns
-only the frozen association schema above. It receives no document `answer`, no
-Gold labels, and no dataset-derived evaluation fields. No live runner is
-included in this phase.
+The future Direct one-call baseline uses the same question, FactNeeds, Evidence
+refs, source/location metadata, and document text. It does not receive a
+separate `ambiguous_entity` field. It returns only the frozen association schema
+above. It receives no document `answer`, no Gold labels, and no dataset-derived
+evaluation fields. No live runner is included in this phase.
 
 ## Files and validation
 

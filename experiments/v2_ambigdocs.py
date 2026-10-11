@@ -71,7 +71,7 @@ def map_row(row: Mapping[str, Any]) -> AmbigCase:
                 content=document["text"],
             )
         )
-        needs.append(FactNeed(subject=title, dimension="answer", value_type="string"))
+        needs.append(FactNeed(subject=title, dimension=row["question"], value_type="string"))
         gold.append(
             GoldAssociation(
                 entity=title,
@@ -132,7 +132,6 @@ def direct_prompt(case: AmbigCase) -> str:
             "Associate each supplied disambiguated entity with its answer and supporting evidence refs.",
             '{"associations":[{"entity":"...","answer":"...","evidence_ref":"E1"}]}',
             f"Question: {json.dumps(case.question, ensure_ascii=False)}",
-            f"Ambiguous entity: {json.dumps(case.ambiguous_entity, ensure_ascii=False)}",
             f"FactNeeds: {json.dumps(targets, ensure_ascii=False, sort_keys=True)}",
             f"Evidence: {json.dumps(evidence, ensure_ascii=False, sort_keys=True)}",
         )
