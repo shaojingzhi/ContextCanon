@@ -1,0 +1,177 @@
+{
+  "dataset": "yoonsanglee/AmbigDocs",
+  "max_output_tokens": 2048,
+  "model": "deepseek-flash",
+  "provider": "official DeepSeek OpenAI-compatible endpoint",
+  "sample_count": 100,
+  "split": "test",
+  "systems": {
+    "contextcanon": {
+      "attempted_cases": 100,
+      "error_category_counts": {},
+      "failed_cases": 0,
+      "latency_ms": {
+        "mean": 1245.608,
+        "p50": 1151.051,
+        "p95": 1980.719
+      },
+      "metrics": {
+        "case_count": 100,
+        "completed_only_metrics": {
+          "answer_token_f1": {
+            "count": 187.829740476645,
+            "rate": 0.6613723256219893,
+            "total": 284
+          },
+          "answer_token_recall": {
+            "count": 209.619380918285,
+            "rate": 0.7380964116841021,
+            "total": 284
+          },
+          "case_count": 100,
+          "entity_label_binding_accuracy": {
+            "count": 272,
+            "rate": 0.9577464788732394,
+            "total": 284
+          },
+          "normalized_exact_answer_association": {
+            "count": 108,
+            "rate": 0.38028169014084506,
+            "total": 284
+          },
+          "provenance_attribution_accuracy": {
+            "count": 272,
+            "rate": 1.0,
+            "total": 272
+          }
+        },
+        "end_to_end_metrics": {
+          "answer_token_f1": {
+            "count": 187.829740476645,
+            "rate": 0.6613723256219893,
+            "total": 284
+          },
+          "answer_token_recall": {
+            "count": 209.619380918285,
+            "rate": 0.7380964116841021,
+            "total": 284
+          },
+          "case_count": 100,
+          "entity_label_binding_accuracy": {
+            "count": 272,
+            "rate": 0.9577464788732394,
+            "total": 284
+          },
+          "normalized_exact_answer_association": {
+            "count": 108,
+            "rate": 0.38028169014084506,
+            "total": 284
+          },
+          "provenance_attribution_accuracy": {
+            "count": 272,
+            "rate": 1.0,
+            "total": 272
+          }
+        },
+        "schema_success_rate": {
+          "count": 100,
+          "rate": 1.0,
+          "total": 100
+        }
+      },
+      "provider_calls": 100,
+      "successful_cases": 100,
+      "usage": {
+        "input_tokens": 123552,
+        "output_tokens": 23912,
+        "total_tokens": 147464
+      }
+    },
+    "direct": {
+      "attempted_cases": 100,
+      "error_category_counts": {
+        "HTTPStatusError": 100
+      },
+      "failed_cases": 100,
+      "latency_ms": {
+        "mean": 225.607,
+        "p50": 203.109,
+        "p95": 358.952
+      },
+      "metrics": {
+        "case_count": 100,
+        "completed_only_metrics": {
+          "answer_token_f1": {
+            "count": 0,
+            "rate": 0.0,
+            "total": 0
+          },
+          "answer_token_recall": {
+            "count": 0,
+            "rate": 0.0,
+            "total": 0
+          },
+          "case_count": 0,
+          "entity_label_binding_accuracy": {
+            "count": 0,
+            "rate": 0.0,
+            "total": 0
+          },
+          "normalized_exact_answer_association": {
+            "count": 0,
+            "rate": 0.0,
+            "total": 0
+          },
+          "provenance_attribution_accuracy": {
+            "count": 0,
+            "rate": 0.0,
+            "total": 0
+          }
+        },
+        "end_to_end_metrics": {
+          "answer_token_f1": {
+            "count": 0.0,
+            "rate": 0.0,
+            "total": 284
+          },
+          "answer_token_recall": {
+            "count": 0.0,
+            "rate": 0.0,
+            "total": 284
+          },
+          "case_count": 100,
+          "entity_label_binding_accuracy": {
+            "count": 0,
+            "rate": 0.0,
+            "total": 284
+          },
+          "normalized_exact_answer_association": {
+            "count": 0,
+            "rate": 0.0,
+            "total": 284
+          },
+          "provenance_attribution_accuracy": {
+            "count": 0,
+            "rate": 0.0,
+            "total": 0
+          }
+        },
+        "schema_success_rate": {
+          "count": 0,
+          "rate": 0.0,
+          "total": 100
+        }
+      },
+      "provider_calls": 100,
+      "successful_cases": 0,
+      "usage": {
+        "input_tokens": null,
+        "output_tokens": null,
+        "total_tokens": null
+      }
+    }
+  },
+  "thinking": false,
+  "timeout_seconds": 60.0,
+  "total_provider_calls": 200
+}
