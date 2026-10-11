@@ -119,6 +119,17 @@ separate `ambiguous_entity` field. It returns only the frozen association schema
 above. It receives no document `answer`, no Gold labels, and no dataset-derived
 evaluation fields. No live runner is included in this phase.
 
+## Corrected Direct baseline follow-up
+
+The original frozen run remains commit `fd0708f`; its 100/100 Direct transport
+failures remain part of that frozen record. After that run, a provider
+JSON-mode prompt-contract issue was identified: the Direct prompt showed a JSON
+example but did not explicitly instruct JSON output. The corrected prompt adds
+only `Return only JSON matching this schema:` before the unchanged schema.
+The resulting Direct run is a **corrected Direct baseline follow-up**, not the
+original untouched run. No semantic benchmark definition, sample, Gold mapping,
+normalization, or scorer changed.
+
 ## Files and validation
 
 - `experiments/v2_ambigdocs.py`: loader, mapping, sample loader, Direct prompt,

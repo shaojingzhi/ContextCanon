@@ -108,6 +108,7 @@ class AmbigDocsTests(unittest.TestCase):
     def test_direct_prompt_has_same_target_and_no_gold_answers(self) -> None:
         prompt = direct_prompt(map_row(row()))
         self.assertIn(row()["question"], prompt)
+        self.assertIn("Return only JSON matching this schema:", prompt)
         self.assertIn("Mercury (planet)", prompt)
         self.assertIn("p1", prompt)
         self.assertNotIn("Ambiguous entity:", prompt)
@@ -216,7 +217,7 @@ class AmbigDocsTests(unittest.TestCase):
         self.assertEqual(len(client.calls), 4)
         self.assertEqual([model for _prompt, model in client.calls], [MODEL] * 4)
         self.assertEqual(
-            ["Return only JSON matching" in prompt for prompt, _model in client.calls],
+            ["Compile only semantic Claims" in prompt for prompt, _model in client.calls],
             [True, False, False, True],
         )
         self.assertEqual(aggregate["total_provider_calls"], 4)

@@ -143,6 +143,7 @@ def direct_prompt(case: AmbigCase) -> str:
     return "\n".join(
         (
             "Associate each supplied disambiguated entity with its answer and supporting evidence refs.",
+            "Return only JSON matching this schema:",
             '{"associations":[{"entity":"...","answer":"...","evidence_ref":"E1"}]}',
             f"Question: {json.dumps(case.question, ensure_ascii=False)}",
             f"FactNeeds: {json.dumps(targets, ensure_ascii=False, sort_keys=True)}",
