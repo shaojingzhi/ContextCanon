@@ -1,0 +1,96 @@
+{
+  "dataset": "yoonsanglee/AmbigDocs",
+  "label": "corrected Direct baseline follow-up",
+  "max_output_tokens": 2048,
+  "metrics": {
+    "attempted_cases": 100,
+    "error_category_counts": {},
+    "failed_cases": 0,
+    "latency_ms": {
+      "mean": 914.198,
+      "p50": 843.702,
+      "p95": 1616.339
+    },
+    "metrics": {
+      "case_count": 100,
+      "completed_only_metrics": {
+        "answer_token_f1": {
+          "count": 187.142946762119,
+          "rate": 0.6589540378947852,
+          "total": 284
+        },
+        "answer_token_recall": {
+          "count": 211.565844568479,
+          "rate": 0.7449501569312641,
+          "total": 284
+        },
+        "case_count": 100,
+        "entity_label_binding_accuracy": {
+          "count": 284,
+          "rate": 1.0,
+          "total": 284
+        },
+        "normalized_exact_answer_association": {
+          "count": 112,
+          "rate": 0.39436619718309857,
+          "total": 284
+        },
+        "provenance_attribution_accuracy": {
+          "count": 284,
+          "rate": 1.0,
+          "total": 284
+        }
+      },
+      "end_to_end_metrics": {
+        "answer_token_f1": {
+          "count": 187.142946762119,
+          "rate": 0.6589540378947852,
+          "total": 284
+        },
+        "answer_token_recall": {
+          "count": 211.565844568479,
+          "rate": 0.7449501569312641,
+          "total": 284
+        },
+        "case_count": 100,
+        "entity_label_binding_accuracy": {
+          "count": 284,
+          "rate": 1.0,
+          "total": 284
+        },
+        "normalized_exact_answer_association": {
+          "count": 112,
+          "rate": 0.39436619718309857,
+          "total": 284
+        },
+        "provenance_attribution_accuracy": {
+          "count": 284,
+          "rate": 1.0,
+          "total": 284
+        }
+      },
+      "schema_success_rate": {
+        "count": 100,
+        "rate": 1.0,
+        "total": 100
+      }
+    },
+    "provider_calls": 100,
+    "successful_cases": 100,
+    "usage": {
+      "input_tokens": 68882,
+      "output_tokens": 11711,
+      "total_tokens": 80593
+    }
+  },
+  "model": "deepseek-flash",
+  "original_frozen_run_commit": "fd0708f",
+  "provider": "official DeepSeek OpenAI-compatible endpoint",
+  "provider_calls": 100,
+  "results_path": "benchmarks/results/ambigdocs_direct_100_corrected.jsonl",
+  "sample_count": 100,
+  "split": "test",
+  "system": "direct",
+  "thinking": false,
+  "timeout_seconds": 60.0
+}
